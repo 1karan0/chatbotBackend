@@ -1,3 +1,8 @@
+# Quick fix for broken system SQLite
+import pysqlite3 as sqlite3
+import sys
+sys.modules['sqlite3'] = sqlite3
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool

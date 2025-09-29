@@ -1,8 +1,10 @@
 from datetime import timedelta
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from models.schemas import TokenRequest, TokenResponse, TenantCreate, UserCreate
+# CORRECTED IMPORT - use TenantInfo and UserInfo instead of TenantResponse/UserResponse
+from models.schemas import TokenRequest, TokenResponse, TenantCreate, UserCreate, TenantInfo, UserInfo
 from database.connection import get_db
 from database.models import User, Tenant
 from auth.jwt_handler import jwt_handler
@@ -142,3 +144,38 @@ async def create_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating user: {str(e)}"
         )
+
+# CORRECTED GET ENDPOINTS - using TenantInfo and UserInfo
+@router.get("/tenants", response_model=List[TenantInfo])
+async def get_all_tenants(db: Session = Depends(get_db)):
+    """Get all tenants"""
+    tenants = db.query(Tenant).all()
+    return tenants
+
+@router.get("/tenants/{tenant_id}", response_model=TenantInfo)
+async def get_tenant(tenant_id: str, db: Session = Depends(get_db)):
+    """Get specific tenant by ID"""
+    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+@router.get("/users", response_model=List[UserInfo])
+async def get_all_users(db: Session = Depends(get_db)):
+    """Get all users"""
+    users = db.query(User).all()
+    return users
+
+@router.get("/users/{user_id}", response_model=UserInfo)
+async def get_user(user_id: int, db: Session = Depends(get_db)):
+    """Get specific user by ID"""
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+@router.get("/tenants/{tenant_id}/users", response_model=List[UserInfo])
+async def get_tenant_users(tenant_id: str, db: Session = Depends(get_db)):
+    """Get all users for a specific tenant"""
+    users = db.query(User).filter(User.tenant_id == tenant_id).all()
+    return users

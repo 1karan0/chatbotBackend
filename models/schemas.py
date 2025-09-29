@@ -28,7 +28,7 @@ class TenantCreate(BaseModel):
     tenant_id: str = Field(..., description="Unique tenant identifier")
     tenant_name: str = Field(..., description="Human-readable tenant name")
     username: str = Field(..., description="Admin username for the tenant")
-    password: str = Field(..., description="Admin password for the tenant", min_length=8)
+    password: str = Field(..., description="Admin password for the tenant")
 
 class TenantInfo(BaseModel):
     """Response model for tenant information."""
@@ -36,12 +36,18 @@ class TenantInfo(BaseModel):
     tenant_name: str
     created_at: datetime
     is_active: bool
+    
+    class Config:
+        from_attributes = True # Enable ORM mode
 
 class UserCreate(BaseModel):
     """Request model for creating a new user."""
     username: str = Field(..., description="Unique username")
     password: str = Field(..., description="User password", min_length=8)
     tenant_id: str = Field(..., description="Tenant ID the user belongs to")
+    
+    class Config:
+        from_attributes = True
 
 class UserInfo(BaseModel):
     """Response model for user information."""
