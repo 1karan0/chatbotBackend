@@ -1,7 +1,11 @@
-# Quick fix for broken system SQLite
-import pysqlite3 as sqlite3
+# Quick fix for broken system SQLite - MUST BE AT THE VERY TOP
 import sys
-sys.modules['sqlite3'] = sqlite3
+try:
+    import pysqlite3 as sqlite3
+    sys.modules['sqlite3'] = sqlite3
+except ImportError:
+    # Fallback if pysqlite3 is not available
+    pass
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session

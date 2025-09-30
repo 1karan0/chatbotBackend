@@ -1,28 +1,33 @@
 from datetime import timedelta
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Dict
+from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-# CORRECTED IMPORT - use TenantInfo and UserInfo instead of TenantResponse/UserResponse
-from models.schemas import TokenRequest, TokenResponse, TenantCreate, UserCreate, TenantInfo, UserInfo
 from database.connection import get_db
 from database.models import User, Tenant
 from auth.jwt_handler import jwt_handler
 from services.data_loader import data_loader
 from config.settings import settings
 
+from models.schemas import TokenResponse, TenantInfo, UserInfo
+
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
+
+# ---------------- LOGIN (Swagger-compatible) ----------------
 @router.post("/token", response_model=TokenResponse)
 async def login_for_access_token(
-    form_data: TokenRequest,
+    form_data: OAuth2PasswordRequestForm = Depends(),  # form-data from Swagger
     db: Session = Depends(get_db)
 ):
     """Authenticate user and return JWT token."""
-    # Get user from database
-    user = db.query(User).filter(User.username == form_data.username).first()
+    username = form_data.username
+    password = form_data.password
+
+    user = db.query(User).filter(User.username == username).first()
     
-    if not user or not jwt_handler.verify_password(form_data.password, user.hashed_password):
+    if not user or not jwt_handler.verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -36,7 +41,6 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Create access token
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = jwt_handler.create_access_token(
         data={"sub": user.user_id, "tenant_id": user.tenant_id},
@@ -49,90 +53,75 @@ async def login_for_access_token(
         expires_in=settings.access_token_expire_minutes * 60
     )
 
+
+# ---------------- CREATE TENANT ----------------
 @router.post("/tenants", status_code=status.HTTP_201_CREATED)
 async def create_tenant(
-    tenant_data: TenantCreate,
+    tenant_data: Dict[str, str],  # accept JSON dictionary
     db: Session = Depends(get_db)
 ):
     """Create a new tenant and admin user."""
-    # Check if tenant ID already exists
-    existing_tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_data.tenant_id).first()
-    if existing_tenant:
+    tenant_id = tenant_data.get("tenant_id")
+    tenant_name = tenant_data.get("tenant_name")
+    username = tenant_data.get("username")
+    password = tenant_data.get("password")
+    
+    if not tenant_id or not tenant_name or not username or not password:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tenant ID already exists"
+            status_code=400,
+            detail="tenant_id, tenant_name, username, and password are required"
         )
     
-    # Check if username already exists
-    existing_user = db.query(User).filter(User.username == tenant_data.username).first()
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists"
-        )
+    if db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first():
+        raise HTTPException(status_code=400, detail="Tenant ID already exists")
+    if db.query(User).filter(User.username == username).first():
+        raise HTTPException(status_code=400, detail="Username already exists")
     
     try:
-        # Create tenant
-        tenant = Tenant(
-            tenant_id=tenant_data.tenant_id,
-            tenant_name=tenant_data.tenant_name
-        )
+        tenant = Tenant(tenant_id=tenant_id, tenant_name=tenant_name)
         db.add(tenant)
-        db.flush()  # Flush to get the tenant_id
+        db.flush()
         
-        # Create admin user for tenant
-        hashed_password = jwt_handler.hash_password(tenant_data.password)
-        user = User(
-            username=tenant_data.username,
-            hashed_password=hashed_password,
-            tenant_id=tenant.tenant_id
-        )
+        hashed_password = jwt_handler.hash_password(password)
+        user = User(username=username, hashed_password=hashed_password, tenant_id=tenant.tenant_id)
         db.add(user)
         
-        # Create tenant data directory
-        data_loader.create_tenant_directory(tenant_data.tenant_id)
+        data_loader.create_tenant_directory(tenant_id)
         
         db.commit()
-        
         return {"message": "Tenant and admin user created successfully"}
         
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating tenant: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error creating tenant: {str(e)}")
 
+
+# ---------------- CREATE USER ----------------
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 async def create_user(
-    user_data: UserCreate,
+    user_data: Dict[str, str],  # accept JSON dictionary
     db: Session = Depends(get_db)
 ):
     """Create a new user for an existing tenant."""
-    # Check if tenant exists
-    tenant = db.query(Tenant).filter(Tenant.tenant_id == user_data.tenant_id).first()
-    if not tenant:
+    tenant_id = user_data.get("tenant_id")
+    username = user_data.get("username")
+    password = user_data.get("password")
+    
+    if not tenant_id or not username or not password:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found"
+            status_code=400,
+            detail="tenant_id, username, and password are required"
         )
     
-    # Check if username already exists
-    existing_user = db.query(User).filter(User.username == user_data.username).first()
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists"
-        )
+    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if db.query(User).filter(User.username == username).first():
+        raise HTTPException(status_code=400, detail="Username already exists")
     
     try:
-        # Create user
-        hashed_password = jwt_handler.hash_password(user_data.password)
-        user = User(
-            username=user_data.username,
-            hashed_password=hashed_password,
-            tenant_id=user_data.tenant_id
-        )
+        hashed_password = jwt_handler.hash_password(password)
+        user = User(username=username, hashed_password=hashed_password, tenant_id=tenant_id)
         db.add(user)
         db.commit()
         
@@ -140,42 +129,37 @@ async def create_user(
         
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating user: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error creating user: {str(e)}")
 
-# CORRECTED GET ENDPOINTS - using TenantInfo and UserInfo
+
+# ---------------- GET TENANTS ----------------
 @router.get("/tenants", response_model=List[TenantInfo])
 async def get_all_tenants(db: Session = Depends(get_db)):
-    """Get all tenants"""
-    tenants = db.query(Tenant).all()
-    return tenants
+    return db.query(Tenant).all()
+
 
 @router.get("/tenants/{tenant_id}", response_model=TenantInfo)
 async def get_tenant(tenant_id: str, db: Session = Depends(get_db)):
-    """Get specific tenant by ID"""
     tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     return tenant
 
+
+# ---------------- GET USERS ----------------
 @router.get("/users", response_model=List[UserInfo])
 async def get_all_users(db: Session = Depends(get_db)):
-    """Get all users"""
-    users = db.query(User).all()
-    return users
+    return db.query(User).all()
+
 
 @router.get("/users/{user_id}", response_model=UserInfo)
-async def get_user(user_id: int, db: Session = Depends(get_db)):
-    """Get specific user by ID"""
+async def get_user(user_id: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+
 @router.get("/tenants/{tenant_id}/users", response_model=List[UserInfo])
 async def get_tenant_users(tenant_id: str, db: Session = Depends(get_db)):
-    """Get all users for a specific tenant"""
-    users = db.query(User).filter(User.tenant_id == tenant_id).all()
-    return users
+    return db.query(User).filter(User.tenant_id == tenant_id).all()
