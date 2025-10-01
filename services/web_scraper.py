@@ -42,6 +42,8 @@ class WebScraper:
 
                     text = soup.get_text(separator='\n', strip=True)
                     text = re.sub(r'\n\s*\n', '\n\n', text)
+                    print("Extracted text :", {text})
+                    print("Extracted title :", {title})
 
                     return {
                         'success': True,
