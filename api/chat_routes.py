@@ -26,6 +26,7 @@ async def ask_question(
     try:
         # Get answer using retrieval service
         result = retrieval_service.answer_question(request.question, tenant_id)
+        print(f"Question: {request.question} | Answer: {result['answer']} | Sources: {result['sources']}")
         
         return QuestionResponse(
             answer=result["answer"],
@@ -37,16 +38,17 @@ async def ask_question(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing question: {str(e)}"
-        )
+        ) 
 
 @router.post("/rebuild-index", status_code=status.HTTP_200_OK)
 async def rebuild_search_index(
     tenant_id: str = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
-    """Rebuild the search index (admin operation)."""
+    """Rebuild the search index."""
     try:
         success = retrieval_service.initialize_database(force_rebuild=True)
+        
         if success:
             return {"message": "Search index rebuilt successfully"}
         else:

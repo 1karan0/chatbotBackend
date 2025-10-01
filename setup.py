@@ -4,8 +4,8 @@ Setup script for Multi-Tenant RAG Chatbot
 """
 
 import os
-import sys
-import sqlite3
+# import sys
+# import sqlite3
 from pathlib import Path
 
 def create_directory_structure():
