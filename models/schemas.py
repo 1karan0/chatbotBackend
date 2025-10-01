@@ -62,3 +62,32 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error message")
     detail: Optional[str] = Field(None, description="Detailed error information")
     code: Optional[str] = Field(None, description="Error code")
+
+class KnowledgeSourceCreate(BaseModel):
+    """Request model for creating a knowledge source."""
+    source_type: str = Field(..., description="Type: url, text, or file")
+    source_url: Optional[str] = Field(None, description="URL if type is url")
+    source_content: Optional[str] = Field(None, description="Text content if type is text")
+    file_name: Optional[str] = Field(None, description="File name if type is file")
+    file_content: Optional[str] = Field(None, description="File content if type is file")
+
+class KnowledgeSourceInfo(BaseModel):
+    """Response model for knowledge source information."""
+    source_id: str
+    tenant_id: str
+    source_type: str
+    source_url: Optional[str]
+    file_name: Optional[str]
+    status: str
+    error_message: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ProcessingStatus(BaseModel):
+    """Response model for processing status."""
+    source_id: str
+    status: str
+    message: str
+    error_message: Optional[str] = None

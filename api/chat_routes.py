@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from models.schemas import QuestionRequest, QuestionResponse
 from auth.dependencies import get_tenant_id, get_current_user
-from services.retrieval_service import retrieval_service
+from services.retrieval_service_v2 import retrieval_service
 from database.connection import get_db
 from database.models import User
 
@@ -40,24 +40,54 @@ async def ask_question(
             detail=f"Error processing question: {str(e)}"
         ) 
 
-@router.post("/rebuild-index", status_code=status.HTTP_200_OK)
-async def rebuild_search_index(
+@router.get("/embed-code", status_code=status.HTTP_200_OK)
+async def get_embed_code(
     tenant_id: str = Depends(get_tenant_id),
     current_user: User = Depends(get_current_user)
 ):
-    """Rebuild the search index."""
+    """Get embed code for integrating the chatbot into a website."""
+    embed_code = f"""<!-- AI Chatbot Widget -->
+<script>
+  (function() {{
+    var chatbotConfig = {{
+      tenantId: '{tenant_id}',
+      apiEndpoint: 'YOUR_API_ENDPOINT_HERE',
+      primaryColor: '#2563eb',
+      position: 'bottom-right'
+    }};
+
+    // Load chatbot widget
+    var script = document.createElement('script');
+    script.src = 'YOUR_WIDGET_URL_HERE/chatbot-widget.js';
+    script.async = true;
+    document.body.appendChild(script);
+  }})();
+</script>
+<!-- End AI Chatbot Widget -->"""
+
+    return {
+        "tenant_id": tenant_id,
+        "embed_code": embed_code,
+        "instructions": "Copy and paste this code before the closing </body> tag of your website"
+    }
+
+@router.get("/status", status_code=status.HTTP_200_OK)
+async def get_chat_status(
+    tenant_id: str = Depends(get_tenant_id),
+    current_user: User = Depends(get_current_user)
+):
+    """Get chatbot status for the current tenant."""
     try:
-        success = retrieval_service.initialize_database(force_rebuild=True)
-        
-        if success:
-            return {"message": "Search index rebuilt successfully"}
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to rebuild search index"
-            )
+        doc_count = retrieval_service.get_tenant_document_count(tenant_id)
+
+        return {
+            "tenant_id": tenant_id,
+            "document_count": doc_count,
+            "status": "ready" if doc_count > 0 else "no_knowledge",
+            "message": f"Chatbot has {doc_count} document chunks indexed" if doc_count > 0 else "No knowledge sources added yet"
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error rebuilding index: {str(e)}"
+            detail=f"Error getting status: {str(e)}"
         )

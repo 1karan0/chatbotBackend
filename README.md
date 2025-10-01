@@ -1,196 +1,443 @@
-# Multi-Tenant RAG Chatbot
+# Multi-Tenant RAG Chatbot API
 
-A production-ready multi-tenant chatbot application using RAG (Retrieval-Augmented Generation) with JWT authentication, built with FastAPI, LangChain, Chroma DB, and OpenAI.
+A production-ready multi-tenant chatbot backend using Retrieval-Augmented Generation (RAG) with JWT authentication. This system allows multiple tenants to create custom chatbots trained on their own knowledge sources (URLs, text, and files).
 
 ## Features
 
-- **Multi-tenant architecture** with strict data isolation
-- **JWT-based authentication** with secure password hashing
-- **RAG system** combining dense (Chroma) and sparse (BM25) retrieval
-- **REST API** with automatic documentation
-- **Tenant-specific data folders** for enhanced security
-- **SQL database** for tenant and user management
-- **ngrok integration** for easy public access
+- **Multi-tenant architecture** with complete data isolation
+- **Dynamic knowledge ingestion** from URLs, text content, and file uploads
+- **Vector-based semantic search** using OpenAI embeddings and ChromaDB
+- **JWT authentication** for secure API access
+- **RESTful API** with automatic Swagger documentation
+- **Web scraping** for automatic URL content extraction
+- **Per-tenant index management** and rebuilding
+- **Embed code generation** for website integration
+- **Async processing** for handling large documents
 
 ## Quick Start
 
-### 1. Setup
-
-```bash
-# Clone and setup
-git clone <repository>
-cd multi-tenant-rag-chatbot
-
-# Run setup script
-python setup.py
-```
-
-### 2. Configure Environment
-
-Edit the `.env` file with your actual credentials:
-
-```bash
-OPENAI_API_KEY=your_actual_openai_api_key
-SECRET_KEY=your_super_secret_jwt_key
-NGROK_AUTH_TOKEN=326XQY64T2IlwvoXxgWZZgCURGR_3Dzi2gaTewvfUasE3NWiH
-```
-
-### 3. Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Run the Application
+### 2. Configure Environment
+
+Create a `.env` file with your OpenAI API key:
 
 ```bash
-# Local development
-python main.py
-
-# With ngrok (public access)
-python run_with_ngrok.py
+OPENAI_API_KEY=your_openai_api_key_here
+SECRET_KEY=your_jwt_secret_key_here
 ```
 
-### 5. Access the API
+### 3. Run the Application
 
-- **Local:** http://localhost:8000/docs
-- **With ngrok:** The public URL will be displayed in the console
+```bash
+python main.py
+```
 
-## API Usage
+The API will be available at: http://localhost:8000
+
+### 4. Access API Documentation
+
+Open your browser and navigate to:
+- **Swagger UI:** http://localhost:8000/docs
+- **ReDoc:** http://localhost:8000/redoc
+
+## API Endpoints
 
 ### Authentication
 
-First, get an authentication token:
-
+#### Create Tenant
 ```bash
-curl -X POST "http://localhost:8000/auth/token" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "london_user", "password": "london123"}'
+POST /auth/tenants
+Content-Type: application/json
+
+{
+  "tenant_id": "my_company",
+  "tenant_name": "My Company",
+  "username": "admin",
+  "password": "secure_password"
+}
 ```
 
-### Ask Questions
-
-Use the token to ask questions:
-
+#### Login
 ```bash
-curl -X POST "http://localhost:8000/chat/ask" \
-  -H "Authorization: Bearer <your_token>" \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What services do you offer?"}'
+POST /auth/token
+Content-Type: application/x-www-form-urlencoded
+
+username=admin&password=secure_password
 ```
 
-## Sample Credentials
+Response:
+```json
+{
+  "access_token": "eyJ...",
+  "token_type": "bearer",
+  "expires_in": 1800
+}
+```
 
-The setup creates these sample accounts:
+### Knowledge Management
 
-- **tenant_a (London):** london_user / london123
-- **tenant_b (Manchester):** manchester_user / manchester123  
-- **tenant_c (Birmingham):** birmingham_user / birmingham123
-- **tenant_d (Glasgow):** glasgow_user / glasgow123
-- **tenant_e (Midlands):** midlands_user / midlands123
+All knowledge endpoints require authentication. Include the token in the Authorization header:
+```
+Authorization: Bearer eyJ...
+```
+
+#### Add URL Source
+```bash
+POST /knowledge/sources/url
+Content-Type: multipart/form-data
+
+url=https://example.com/about-us
+```
+
+#### Add Text Source
+```bash
+POST /knowledge/sources/text
+Content-Type: multipart/form-data
+
+text=Your text content here...
+title=Product Documentation
+```
+
+#### Upload File
+```bash
+POST /knowledge/sources/file
+Content-Type: multipart/form-data
+
+file=@document.txt
+```
+
+Supported file types: `.txt`, `.md`, `.csv`
+
+#### List Knowledge Sources
+```bash
+GET /knowledge/sources
+Authorization: Bearer eyJ...
+```
+
+#### Delete Knowledge Source
+```bash
+DELETE /knowledge/sources/{source_id}
+Authorization: Bearer eyJ...
+```
+
+#### Rebuild Index
+```bash
+POST /knowledge/rebuild-index
+Authorization: Bearer eyJ...
+```
+
+### Chat
+
+#### Ask Question
+```bash
+POST /chat/ask
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "question": "What are your business hours?"
+}
+```
+
+Response:
+```json
+{
+  "answer": "Our business hours are Monday-Friday, 9 AM to 5 PM.",
+  "sources": ["https://example.com/contact", "Business Info.txt"],
+  "tenant_id": "my_company"
+}
+```
+
+#### Get Chat Status
+```bash
+GET /chat/status
+Authorization: Bearer eyJ...
+```
+
+#### Get Embed Code
+```bash
+GET /chat/embed-code
+Authorization: Bearer eyJ...
+```
 
 ## Architecture
+
+### Technology Stack
+
+- **FastAPI**: Modern, fast web framework for building APIs
+- **LangChain**: Framework for building LLM applications
+- **ChromaDB**: Vector database for semantic search
+- **OpenAI**: Embeddings (text-embedding-3-small) and chat models (gpt-4o-mini)
+- **SQLAlchemy**: Database ORM for user and knowledge management
+- **BeautifulSoup**: Web scraping and HTML parsing
+- **JWT**: Token-based authentication
 
 ### Directory Structure
 
 ```
-├── config/           # Configuration and settings
-├── models/           # Pydantic models and schemas
-├── database/         # SQLAlchemy models and connection
-├── auth/             # JWT handling and dependencies
-├── services/         # Business logic (data loading, retrieval)
-├── api/              # FastAPI route handlers
-├── data/             # Tenant-specific data folders
-├── chroma_db/        # Vector database storage
-├── main.py           # Application entry point
-├── run_with_ngrok.py # ngrok integration
-└── setup.py          # Setup and initialization
+├── api/
+│   ├── auth_routes.py        # Authentication endpoints
+│   ├── chat_routes.py        # Chat and status endpoints
+│   └── knowledge_routes.py   # Knowledge management endpoints
+├── auth/
+│   ├── dependencies.py       # Auth dependencies
+│   └── jwt_handler.py        # JWT token handling
+├── config/
+│   └── settings.py           # Application configuration
+├── database/
+│   ├── connection.py         # Database connection
+│   └── models.py             # SQLAlchemy models
+├── models/
+│   └── schemas.py            # Pydantic schemas
+├── services/
+│   ├── data_loader.py        # Legacy data loader
+│   ├── document_processor.py # Document processing
+│   ├── retrieval_service_v2.py # RAG retrieval service
+│   └── web_scraper.py        # Web scraping utility
+├── data/                     # Tenant data storage
+├── chroma_db/                # Vector database storage
+└── main.py                   # Application entry point
 ```
 
-### Multi-Tenancy
+### Data Flow
 
-- **Data Isolation:** Each tenant has a separate data folder
-- **Vector Database:** Shared Chroma DB with tenant metadata filtering
-- **Authentication:** JWT tokens include tenant_id claims
-- **SQL Database:** Separate tables for tenants and users
+1. **Knowledge Ingestion:**
+   - User uploads URL/text/file via API
+   - Content is extracted and processed
+   - Text is chunked into smaller segments
+   - Chunks are embedded using OpenAI
+   - Embeddings stored in ChromaDB with tenant metadata
 
-### RAG Pipeline
+2. **Query Processing:**
+   - User asks question via API
+   - Question is embedded
+   - Similar chunks retrieved (filtered by tenant_id)
+   - Retrieved context + question sent to GPT
+   - Answer returned with sources
 
-1. **Document Loading:** Tenant-specific documents from separate folders
-2. **Text Splitting:** Different chunk sizes for dense vs sparse retrieval
-3. **Vector Storage:** OpenAI embeddings stored in Chroma DB
-4. **Retrieval:** Ensemble of semantic (Chroma) + keyword (BM25) search
-5. **Generation:** OpenAI GPT models generate responses from retrieved context
+3. **Multi-Tenancy:**
+   - Each tenant has isolated knowledge base
+   - Vector DB uses metadata filtering for tenant isolation
+   - JWT tokens contain tenant_id for authorization
+   - All queries automatically filtered by tenant
 
-## Adding New Tenants
+## Integration with Frontend
 
-### Via API
+### Next.js Integration Example
 
-```bash
-curl -X POST "http://localhost:8000/auth/tenants" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tenant_id": "tenant_new",
-    "tenant_name": "New Office",
-    "username": "new_admin",
-    "password": "secure_password123"
-  }'
+```javascript
+// api/chatbot.js
+const API_URL = 'http://localhost:8000';
+let authToken = null;
+
+export async function login(username, password) {
+  const formData = new URLSearchParams();
+  formData.append('username', username);
+  formData.append('password', password);
+
+  const response = await fetch(`${API_URL}/auth/token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: formData,
+  });
+
+  const data = await response.json();
+  authToken = data.access_token;
+  return data;
+}
+
+export async function addURL(url) {
+  const formData = new FormData();
+  formData.append('url', url);
+
+  const response = await fetch(`${API_URL}/knowledge/sources/url`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${authToken}`,
+    },
+    body: formData,
+  });
+
+  return await response.json();
+}
+
+export async function addText(text, title) {
+  const formData = new FormData();
+  formData.append('text', text);
+  formData.append('title', title);
+
+  const response = await fetch(`${API_URL}/knowledge/sources/text`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${authToken}`,
+    },
+    body: formData,
+  });
+
+  return await response.json();
+}
+
+export async function uploadFile(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_URL}/knowledge/sources/file`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${authToken}`,
+    },
+    body: formData,
+  });
+
+  return await response.json();
+}
+
+export async function askQuestion(question) {
+  const response = await fetch(`${API_URL}/chat/ask`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ question }),
+  });
+
+  return await response.json();
+}
+
+export async function getKnowledgeSources() {
+  const response = await fetch(`${API_URL}/knowledge/sources`, {
+    headers: {
+      'Authorization': `Bearer ${authToken}`,
+    },
+  });
+
+  return await response.json();
+}
 ```
-
-### Manually
-
-1. Create data folder: `mkdir -p data/tenant_new`
-2. Add text files to the folder
-3. Use the tenant creation API or add directly to database
-4. Rebuild the search index: `POST /chat/rebuild-index`
 
 ## Configuration
 
-Key settings in `.env`:
+### Environment Variables
 
-- **OPENAI_API_KEY:** Required for embeddings and chat completion
-- **SECRET_KEY:** JWT signing key (use a strong random key in production)
-- **DATABASE_URL:** SQLite by default, supports PostgreSQL/MySQL
-- **CHROMA_PATH:** Vector database storage location
-- **DATA_PATH:** Root directory for tenant data folders
+Create a `.env` file with the following:
+
+```bash
+# Required
+OPENAI_API_KEY=sk-...
+
+# JWT Configuration
+SECRET_KEY=your-super-secret-jwt-key-change-in-production
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+ALGORITHM=HS256
+
+# Database
+DATABASE_URL=sqlite:///./app.db
+CHROMA_PATH=./chroma_db
+DATA_PATH=./data
+```
+
+### Settings
+
+You can customize the following in `config/settings.py`:
+
+- **embedding_model**: OpenAI embedding model (default: text-embedding-3-small)
+- **chat_model**: OpenAI chat model (default: gpt-4o-mini)
+- **temperature**: LLM temperature (default: 0.0)
+- **dense_chunk_size**: Chunk size for documents (default: 800)
+- **dense_chunk_overlap**: Chunk overlap (default: 100)
+- **retrieval_k**: Number of chunks to retrieve (default: 4)
 
 ## Production Deployment
 
-1. **Security:**
-   - Use strong, random SECRET_KEY
-   - Configure CORS origins appropriately
-   - Use HTTPS in production
-   - Store API keys securely
+### Security Best Practices
 
-2. **Database:**
-   - Use PostgreSQL or MySQL instead of SQLite
-   - Set up proper backup strategies
-   - Configure connection pooling
+1. **Use strong SECRET_KEY**
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
 
-3. **Scaling:**
-   - Use multiple workers with Gunicorn
-   - Consider separate vector database instances
-   - Implement caching for frequently accessed data
+2. **Configure CORS properly**
+   ```python
+   app.add_middleware(
+       CORSMiddleware,
+       allow_origins=["https://yourdomain.com"],
+       allow_credentials=True,
+       allow_methods=["*"],
+       allow_headers=["*"],
+   )
+   ```
+
+3. **Use HTTPS** in production
+
+4. **Store secrets securely** (use environment variables, not .env files)
+
+5. **Implement rate limiting**
+
+### Deployment Options
+
+#### Docker
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+#### Gunicorn (Production)
+```bash
+gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"Vector database not available"**
-   - Check if OPENAI_API_KEY is set
-   - Verify data files exist in tenant folders
-   - Run the rebuild index endpoint
+**1. "Error: Vector database not available"**
+- Ensure OPENAI_API_KEY is set correctly
+- Check that ChromaDB directory is writable
+- Try reinitializing: DELETE chroma_db folder and restart
 
-2. **Authentication errors**
-   - Verify JWT token format
-   - Check token expiration
-   - Ensure user exists and is active
+**2. "No information to answer question"**
+- Add knowledge sources first via /knowledge/sources endpoints
+- Check if knowledge sources status is "completed"
+- Verify tenant_id matches between sources and chat
 
-3. **No relevant documents found**
-   - Check tenant_id in token matches data folder
-   - Verify documents contain relevant content
-   - Check document format (should be .txt files)
+**3. "Failed to scrape URL"**
+- Check if URL is accessible
+- Some websites block automated scraping
+- Try adding the content as text instead
+
+**4. Authentication errors**
+- Verify token is included in Authorization header
+- Check token hasn't expired (default: 30 minutes)
+- Ensure format is: `Bearer <token>`
+
+## Roadmap
+
+- [ ] Support for more file types (PDF, DOCX, etc.)
+- [ ] Conversation history and context
+- [ ] Multiple language support
+- [ ] Analytics and usage tracking
+- [ ] Webhook notifications
+- [ ] Rate limiting per tenant
+- [ ] Supabase integration for production database
 
 ## License
 
 This project is licensed under the MIT License.
+
+## Support
+
+For issues and questions, please open an issue in the repository.

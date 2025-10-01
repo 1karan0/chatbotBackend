@@ -7,9 +7,10 @@ from contextlib import asynccontextmanager
 
 from config.settings import settings
 from database.connection import create_tables
-from services.retrieval_service import retrieval_service
+from services.retrieval_service_v2 import retrieval_service
 from api.auth_routes import router as auth_router
 from api.chat_routes import router as chat_router
+from api.knowledge_routes import router as knowledge_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,12 +29,11 @@ async def lifespan(app: FastAPI):
     print("Database tables created/verified")
     
     # Initialize retrieval service
-    success = retrieval_service.load_existing_database()
+    success = retrieval_service.initialize_database()
     if not success:
-        print("Existing database not found, initializing new database...")
-        success = retrieval_service.initialize_database()
-        if not success:
-            print("Warning: Failed to initialize retrieval database")
+        print("Warning: Failed to initialize retrieval database")
+    else:
+        print("Retrieval service initialized successfully")
     
     yield
     
@@ -62,6 +62,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router)
 app.include_router(chat_router)
+app.include_router(knowledge_router)
 
 @app.get("/", include_in_schema=False)
 async def root():

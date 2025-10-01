@@ -19,3 +19,6 @@ nest-asyncio==1.5.8
 unstructured==0.11.6
 pyngrok==7.0.0
 requests==2.32.4
+beautifulsoup4==4.12.2
+aiohttp==3.9.1
+aiofiles==23.2.1
