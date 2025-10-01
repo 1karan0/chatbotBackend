@@ -52,7 +52,7 @@ class KnowledgeSource(Base):
     file_content = Column(Text, nullable=True)
     status = Column(String, default="pending")
     error_message = Column(Text, nullable=True)
-    metadata = Column(JSON, default={})
+    source_metadata = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -18,23 +18,48 @@ A production-ready multi-tenant chatbot backend using Retrieval-Augmented Genera
 
 ### 1. Install Dependencies
 
+**Option A: Automated Setup (Recommended)**
 ```bash
+./install.sh
+```
+
+**Option B: Manual Setup**
+```bash
+# Create virtual environment
+python3 -m venv .venv
+
+# Activate virtual environment
+source .venv/bin/activate  # On Linux/Mac
+# or
+.venv\Scripts\activate  # On Windows
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Download NLTK data
+python3 -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perceptron_tagger')"
 ```
 
 ### 2. Configure Environment
 
-Create a `.env` file with your OpenAI API key:
+Edit the `.env` file and add your OpenAI API key:
 
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
-SECRET_KEY=your_jwt_secret_key_here
+DATABASE_URL=sqlite:///./app.db
+JWT_SECRET_KEY=your_secret_key_change_this_in_production
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_MINUTES=1440
 ```
 
 ### 3. Run the Application
 
 ```bash
-python main.py
+# Make sure virtual environment is activated
+source .venv/bin/activate
+
+# Run the application
+python3 main.py
 ```
 
 The API will be available at: http://localhost:8000
@@ -111,7 +136,7 @@ Content-Type: multipart/form-data
 file=@document.txt
 ```
 
-Supported file types: `.txt`, `.md`, `.csv`
+Supported file types: `.txt`, `.md`, `.csv`, `.pdf`, `.docx`
 
 #### List Knowledge Sources
 ```bash
@@ -424,9 +449,19 @@ gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 - Check token hasn't expired (default: 30 minutes)
 - Ensure format is: `Bearer <token>`
 
+## Recent Fixes
+
+### v1.1.0 (Current)
+- ✅ Fixed SQLAlchemy error: Changed `metadata` column to `source_metadata` (reserved keyword issue)
+- ✅ Added NLTK support and automatic data downloads
+- ✅ Added support for PDF and DOCX file uploads
+- ✅ Improved document processor with better file type handling
+- ✅ Created automated installation script
+- ✅ Enhanced error handling and logging
+
 ## Roadmap
 
-- [ ] Support for more file types (PDF, DOCX, etc.)
+- [x] Support for more file types (PDF, DOCX) - **Completed**
 - [ ] Conversation history and context
 - [ ] Multiple language support
 - [ ] Analytics and usage tracking

@@ -9,7 +9,7 @@ from database.connection import get_db
 from database.models import User, KnowledgeSource
 from services.web_scraper import web_scraper
 from services.document_processor import document_processor
-from services.retrieval_service import retrieval_service
+from services.retrieval_service_v2 import retrieval_service
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -52,7 +52,7 @@ async def add_url_source(
             )
 
         source.source_content = result['content']
-        source.metadata = {'title': result.get('title', url)}
+        source.source_metadata = {'title': result.get('title', url)}
 
         await retrieval_service.add_documents_to_index(
             text=result['content'],
@@ -98,7 +98,7 @@ async def add_text_source(
         source_type="text",
         source_content=text,
         status="processing",
-        metadata={'title': title}
+        source_metadata={'title': title}
     )
     db.add(source)
     db.commit()
@@ -143,7 +143,7 @@ async def add_file_source(
             detail="File name is required"
         )
 
-    allowed_extensions = ['.txt', '.md', '.csv']
+    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx']
     if not any(file.filename.endswith(ext) for ext in allowed_extensions):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

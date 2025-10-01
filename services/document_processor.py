@@ -1,8 +1,16 @@
 from typing import List, Dict, Any
+import io
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from config.settings import settings
+
+try:
+    import nltk
+    nltk.download('punkt', quiet=True)
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+except Exception as e:
+    print(f"Warning: NLTK download failed: {e}")
 
 class DocumentProcessor:
     """Handles document processing, chunking, and embedding generation."""
@@ -68,10 +76,30 @@ class DocumentProcessor:
             Extracted text content
         """
         try:
-            if file_name.endswith('.txt'):
+            if file_name.endswith('.txt') or file_name.endswith('.md'):
                 return file_content.decode('utf-8')
-            elif file_name.endswith('.md'):
-                return file_content.decode('utf-8')
+            elif file_name.endswith('.pdf'):
+                try:
+                    from pypdf import PdfReader
+                    pdf_file = io.BytesIO(file_content)
+                    pdf_reader = PdfReader(pdf_file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                    return text
+                except Exception as e:
+                    print(f"Error extracting PDF: {e}")
+                    return file_content.decode('utf-8', errors='ignore')
+            elif file_name.endswith('.docx'):
+                try:
+                    from docx import Document as DocxDocument
+                    doc_file = io.BytesIO(file_content)
+                    doc = DocxDocument(doc_file)
+                    text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+                    return text
+                except Exception as e:
+                    print(f"Error extracting DOCX: {e}")
+                    return file_content.decode('utf-8', errors='ignore')
             else:
                 return file_content.decode('utf-8', errors='ignore')
         except Exception as e:
