@@ -449,25 +449,54 @@ gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 - Check token hasn't expired (default: 30 minutes)
 - Ensure format is: `Bearer <token>`
 
-## Recent Fixes
+## Recent Updates
 
-### v1.1.0 (Current)
-- ✅ Fixed SQLAlchemy error: Changed `metadata` column to `source_metadata` (reserved keyword issue)
+### v2.0.0 (Latest) - Botpress-Level Features 🚀
+- ✅ **Batch URL Processing** - Add multiple URLs in a single request
+- ✅ **Batch File Upload** - Upload multiple files simultaneously
+- ✅ **Sitemap Crawler** - Automatically crawl entire websites
+- ✅ **Image Extraction** - Extract images with metadata from URLs
+- ✅ **Enhanced Error Handling** - Detailed status for each processed item
+- ✅ **Comprehensive Documentation** - 6 detailed guides created
+
+### v1.1.0
+- ✅ Fixed SQLAlchemy error: Changed `metadata` column to `source_metadata`
 - ✅ Added NLTK support and automatic data downloads
 - ✅ Added support for PDF and DOCX file uploads
 - ✅ Improved document processor with better file type handling
 - ✅ Created automated installation script
-- ✅ Enhanced error handling and logging
+
+## 📚 Documentation
+
+| Document | Description |
+|----------|-------------|
+| `WHATS_NEW.md` | ⭐ Start here! Overview of new features |
+| `QUICK_START_FRONTEND.md` | 5-minute Next.js integration guide |
+| `FRONTEND_INTEGRATION.md` | Complete integration documentation |
+| `API_ENDPOINTS.md` | Quick API reference |
+| `CHANGES_SUMMARY.md` | Detailed technical changes |
+| `BACKEND_COMPARISON.md` | Compare with Botpress |
+
+## New API Endpoints
+
+### Batch Processing
+- `POST /knowledge/sources/urls/batch` - Add multiple URLs at once
+- `POST /knowledge/sources/files/batch` - Upload multiple files
+- `POST /knowledge/sources/sitemap` - Crawl sitemap and add all pages
+
+See `API_ENDPOINTS.md` for complete details.
 
 ## Roadmap
 
 - [x] Support for more file types (PDF, DOCX) - **Completed**
+- [x] Batch URL/file processing - **Completed**
+- [x] Sitemap crawling - **Completed**
+- [x] Image extraction - **Completed**
 - [ ] Conversation history and context
-- [ ] Multiple language support
-- [ ] Analytics and usage tracking
-- [ ] Webhook notifications
+- [ ] Streaming responses
+- [ ] Webhooks for events
+- [ ] Analytics dashboard
 - [ ] Rate limiting per tenant
-- [ ] Supabase integration for production database
 
 ## License
 

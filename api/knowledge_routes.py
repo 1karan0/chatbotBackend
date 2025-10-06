@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import asyncio
+import json
 
 from models.schemas import KnowledgeSourceCreate, KnowledgeSourceInfo, ProcessingStatus
 from auth.dependencies import get_tenant_id, get_current_user
@@ -52,7 +53,11 @@ async def add_url_source(
             )
 
         source.source_content = result['content']
-        source.source_metadata = {'title': result.get('title', url)}
+        metadata = {
+            'title': result.get('title', url),
+            'images': result.get('images', [])
+        }
+        source.source_metadata = metadata
 
         await retrieval_service.add_documents_to_index(
             text=result['content'],
@@ -77,6 +82,108 @@ async def add_url_source(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing URL: {str(e)}"
         )
+
+@router.post("/sources/urls/batch", status_code=status.HTTP_201_CREATED)
+async def add_multiple_urls(
+    urls: str = Form(...),
+    tenant_id: str = Depends(get_tenant_id),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Add multiple URLs as knowledge sources and process them."""
+    try:
+        url_list = json.loads(urls) if isinstance(urls, str) else urls
+    except json.JSONDecodeError:
+        url_list = [u.strip() for u in urls.split(',') if u.strip()]
+
+    if not url_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No URLs provided"
+        )
+
+    results = []
+
+    for url in url_list:
+        if not web_scraper.validate_url(url):
+            results.append({
+                "url": url,
+                "status": "failed",
+                "error": "Invalid URL format"
+            })
+            continue
+
+        source = KnowledgeSource(
+            tenant_id=tenant_id,
+            source_type="url",
+            source_url=url,
+            status="processing"
+        )
+        db.add(source)
+        db.commit()
+        db.refresh(source)
+
+        try:
+            result = await web_scraper.scrape_url(url)
+
+            if not result['success']:
+                source.status = "failed"
+                source.error_message = result['error']
+                db.commit()
+                results.append({
+                    "url": url,
+                    "source_id": source.source_id,
+                    "status": "failed",
+                    "error": result['error']
+                })
+                continue
+
+            source.source_content = result['content']
+            metadata = {
+                'title': result.get('title', url),
+                'images': result.get('images', [])
+            }
+            source.source_metadata = metadata
+
+            await retrieval_service.add_documents_to_index(
+                text=result['content'],
+                source=url,
+                tenant_id=tenant_id
+            )
+
+            source.status = "completed"
+            db.commit()
+
+            results.append({
+                "url": url,
+                "source_id": source.source_id,
+                "status": "completed",
+                "images_found": len(metadata.get('images', []))
+            })
+
+        except Exception as e:
+            source.status = "failed"
+            source.error_message = str(e)
+            db.commit()
+            results.append({
+                "url": url,
+                "source_id": source.source_id,
+                "status": "failed",
+                "error": str(e)
+            })
+
+    successful = len([r for r in results if r['status'] == 'completed'])
+    failed = len([r for r in results if r['status'] == 'failed'])
+
+    return {
+        "message": f"Processed {len(results)} URLs: {successful} successful, {failed} failed",
+        "results": results,
+        "summary": {
+            "total": len(results),
+            "successful": successful,
+            "failed": failed
+        }
+    }
 
 @router.post("/sources/text", response_model=ProcessingStatus, status_code=status.HTTP_201_CREATED)
 async def add_text_source(
@@ -198,6 +305,102 @@ async def add_file_source(
             detail=f"Error processing file: {str(e)}"
         )
 
+@router.post("/sources/files/batch", status_code=status.HTTP_201_CREATED)
+async def add_multiple_files(
+    files: List[UploadFile] = File(...),
+    tenant_id: str = Depends(get_tenant_id),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload multiple files as knowledge sources."""
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files provided"
+        )
+
+    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx']
+    results = []
+
+    for file in files:
+        if not file.filename:
+            results.append({
+                "filename": "unknown",
+                "status": "failed",
+                "error": "File name is required"
+            })
+            continue
+
+        if not any(file.filename.endswith(ext) for ext in allowed_extensions):
+            results.append({
+                "filename": file.filename,
+                "status": "failed",
+                "error": f"File type not supported. Allowed: {', '.join(allowed_extensions)}"
+            })
+            continue
+
+        try:
+            file_content = await file.read()
+            text_content = document_processor.extract_file_content(file_content, file.filename)
+
+            if not text_content.strip():
+                results.append({
+                    "filename": file.filename,
+                    "status": "failed",
+                    "error": "Could not extract text from file"
+                })
+                continue
+
+            source = KnowledgeSource(
+                tenant_id=tenant_id,
+                source_type="file",
+                file_name=file.filename,
+                file_content=text_content,
+                status="processing"
+            )
+            db.add(source)
+            db.commit()
+            db.refresh(source)
+
+            await retrieval_service.add_documents_to_index(
+                text=text_content,
+                source=file.filename,
+                tenant_id=tenant_id
+            )
+
+            source.status = "completed"
+            db.commit()
+
+            results.append({
+                "filename": file.filename,
+                "source_id": source.source_id,
+                "status": "completed"
+            })
+
+        except Exception as e:
+            if 'source' in locals():
+                source.status = "failed"
+                source.error_message = str(e)
+                db.commit()
+            results.append({
+                "filename": file.filename,
+                "status": "failed",
+                "error": str(e)
+            })
+
+    successful = len([r for r in results if r['status'] == 'completed'])
+    failed = len([r for r in results if r['status'] == 'failed'])
+
+    return {
+        "message": f"Processed {len(results)} files: {successful} successful, {failed} failed",
+        "results": results,
+        "summary": {
+            "total": len(results),
+            "successful": successful,
+            "failed": failed
+        }
+    }
+
 @router.get("/sources", response_model=List[KnowledgeSourceInfo])
 async def list_knowledge_sources(
     tenant_id: str = Depends(get_tenant_id),
@@ -272,4 +475,120 @@ async def rebuild_tenant_index(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error rebuilding index: {str(e)}"
+        )
+
+@router.post("/sources/sitemap", status_code=status.HTTP_201_CREATED)
+async def crawl_sitemap(
+    sitemap_url: str = Form(...),
+    max_urls: Optional[int] = Form(50),
+    tenant_id: str = Depends(get_tenant_id),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Crawl a sitemap and add all URLs as knowledge sources."""
+    if not web_scraper.validate_url(sitemap_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid sitemap URL format"
+        )
+
+    try:
+        sitemap_result = await web_scraper.scrape_sitemap(sitemap_url)
+
+        if not sitemap_result['success']:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to fetch sitemap: {sitemap_result['error']}"
+            )
+
+        urls = sitemap_result['urls'][:max_urls]
+
+        if not urls:
+            return {
+                "message": "No URLs found in sitemap",
+                "results": [],
+                "summary": {"total": 0, "successful": 0, "failed": 0}
+            }
+
+        results = []
+
+        for url in urls:
+            source = KnowledgeSource(
+                tenant_id=tenant_id,
+                source_type="url",
+                source_url=url,
+                status="processing"
+            )
+            db.add(source)
+            db.commit()
+            db.refresh(source)
+
+            try:
+                result = await web_scraper.scrape_url(url)
+
+                if not result['success']:
+                    source.status = "failed"
+                    source.error_message = result['error']
+                    db.commit()
+                    results.append({
+                        "url": url,
+                        "source_id": source.source_id,
+                        "status": "failed",
+                        "error": result['error']
+                    })
+                    continue
+
+                source.source_content = result['content']
+                metadata = {
+                    'title': result.get('title', url),
+                    'images': result.get('images', [])
+                }
+                source.source_metadata = metadata
+
+                await retrieval_service.add_documents_to_index(
+                    text=result['content'],
+                    source=url,
+                    tenant_id=tenant_id
+                )
+
+                source.status = "completed"
+                db.commit()
+
+                results.append({
+                    "url": url,
+                    "source_id": source.source_id,
+                    "status": "completed",
+                    "images_found": len(metadata.get('images', []))
+                })
+
+            except Exception as e:
+                source.status = "failed"
+                source.error_message = str(e)
+                db.commit()
+                results.append({
+                    "url": url,
+                    "source_id": source.source_id,
+                    "status": "failed",
+                    "error": str(e)
+                })
+
+        successful = len([r for r in results if r['status'] == 'completed'])
+        failed = len([r for r in results if r['status'] == 'failed'])
+
+        return {
+            "message": f"Processed {len(results)} URLs from sitemap: {successful} successful, {failed} failed",
+            "results": results,
+            "summary": {
+                "total": len(results),
+                "successful": successful,
+                "failed": failed
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing sitemap: {str(e)}"
         )
