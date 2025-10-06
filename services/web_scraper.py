@@ -16,10 +16,10 @@ class WebScraper:
 
     async def scrape_url(self, url: str) -> Dict[str, Any]:
         """
-        Scrape content from a URL.
+        Scrape content + images from a URL.
 
         Returns:
-            Dict with 'success', 'content', 'title', 'error' keys
+            Dict with 'success', 'content', 'title','images','error' keys
         """
         try:
             async with aiohttp.ClientSession(timeout=self.timeout, headers=self.headers) as session:
