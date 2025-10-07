@@ -9,36 +9,39 @@ from database.models import User
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+# ...existing code...
+
 @router.post("/ask", response_model=QuestionResponse)
 async def ask_question(
     request: QuestionRequest,
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Ask a question and get an answer based on tenant-specific knowledge."""
+    tenant_id = request.tenant_id  # Add tenant_id to your QuestionRequest schema
+
     if not request.question.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Question cannot be empty"
         )
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant_id is required"
+        )
     
     try:
-        # Get answer using retrieval service
         result = retrieval_service.answer_question(request.question, tenant_id)
-        print(f"Question: {request.question} | Answer: {result['answer']} | Sources: {result['sources']}")
-        
         return QuestionResponse(
             answer=result["answer"],
             sources=result["sources"],
             tenant_id=result["tenant_id"]
         )
-        
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing question: {str(e)}"
-        ) 
+        )
 
 @router.get("/embed-code", status_code=status.HTTP_200_OK)
 async def get_embed_code(

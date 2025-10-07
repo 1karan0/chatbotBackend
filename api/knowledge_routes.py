@@ -17,8 +17,7 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 @router.post("/sources/url", response_model=ProcessingStatus, status_code=status.HTTP_201_CREATED)
 async def add_url_source(
     url: str = Form(...),
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
+    tenant_id: str = Form(...),
     db: Session = Depends(get_db)
 ):
     """Add a URL as a knowledge source and process it."""
@@ -86,8 +85,7 @@ async def add_url_source(
 @router.post("/sources/urls/batch", status_code=status.HTTP_201_CREATED)
 async def add_multiple_urls(
     urls: str = Form(...),
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
+    tenant_id: str = Form(...),
     db: Session = Depends(get_db)
 ):
     """Add multiple URLs as knowledge sources and process them."""
@@ -189,8 +187,7 @@ async def add_multiple_urls(
 async def add_text_source(
     text: str = Form(...),
     title: Optional[str] = Form("Text Document"),
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
+    tenant_id: str = Form(...),
     db: Session = Depends(get_db)
 ):
     """Add text content as a knowledge source."""
@@ -239,8 +236,7 @@ async def add_text_source(
 @router.post("/sources/file", response_model=ProcessingStatus, status_code=status.HTTP_201_CREATED)
 async def add_file_source(
     file: UploadFile = File(...),
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
+    tenant_id: str = File(...),
     db: Session = Depends(get_db)
 ):
     """Upload a file as a knowledge source."""
@@ -308,8 +304,7 @@ async def add_file_source(
 @router.post("/sources/files/batch", status_code=status.HTTP_201_CREATED)
 async def add_multiple_files(
     files: List[UploadFile] = File(...),
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
+    tenant_id: str = File(...),
     db: Session = Depends(get_db)
 ):
     """Upload multiple files as knowledge sources."""
@@ -404,7 +399,6 @@ async def add_multiple_files(
 @router.get("/sources", response_model=List[KnowledgeSourceInfo])
 async def list_knowledge_sources(
     tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """List all knowledge sources for the current tenant."""
@@ -418,7 +412,6 @@ async def list_knowledge_sources(
 async def delete_knowledge_source(
     source_id: str,
     tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Delete a knowledge source."""
@@ -441,7 +434,6 @@ async def delete_knowledge_source(
 @router.post("/rebuild-index", status_code=status.HTTP_200_OK)
 async def rebuild_tenant_index(
     tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Rebuild the search index for the current tenant."""
@@ -482,7 +474,6 @@ async def crawl_sitemap(
     sitemap_url: str = Form(...),
     max_urls: Optional[int] = Form(50),
     tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Crawl a sitemap and add all URLs as knowledge sources."""

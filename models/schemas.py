@@ -16,7 +16,8 @@ class TokenResponse(BaseModel):
 class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str = Field(..., description="The question to ask", min_length=1)
-
+    tenant_id: str = Field(..., description="Tenant ID for the question")
+    
 class QuestionResponse(BaseModel):
     """Response model for question answers."""
     answer: str = Field(..., description="The answer to the question")

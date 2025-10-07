@@ -64,9 +64,8 @@ async def create_tenant(
     tenant_id = tenant_data.get("tenant_id")
     tenant_name = tenant_data.get("tenant_name")
     username = tenant_data.get("username")
-    password = tenant_data.get("password")
     
-    if not tenant_id or not tenant_name or not username or not password:
+    if not tenant_id or not tenant_name or not username :
         raise HTTPException(
             status_code=400,
             detail="tenant_id, tenant_name, username, and password are required"
@@ -82,14 +81,14 @@ async def create_tenant(
         db.add(tenant)
         db.flush()
         
-        hashed_password = jwt_handler.hash_password(password)
-        user = User(username=username, hashed_password=hashed_password, tenant_id=tenant.tenant_id)
+        # hashed_password = jwt_handler.hash_password(password)
+        user = User(username=username, tenant_id=tenant.tenant_id)
         db.add(user)
         
         data_loader.create_tenant_directory(tenant_id)
         
         db.commit()
-        return {"message": "Tenant and admin user created successfully"}
+        return user
         
     except Exception as e:
         db.rollback()
@@ -107,7 +106,7 @@ async def create_user(
     username = user_data.get("username")
     password = user_data.get("password")
     
-    if not tenant_id or not username or not password:
+    if not tenant_id or not username :
         raise HTTPException(
             status_code=400,
             detail="tenant_id, username, and password are required"
@@ -121,7 +120,7 @@ async def create_user(
     
     try:
         hashed_password = jwt_handler.hash_password(password)
-        user = User(username=username, hashed_password=hashed_password, tenant_id=tenant_id)
+        user = User(username=username, hashed_password=password, tenant_id=tenant_id)
         db.add(user)
         db.commit()
         
@@ -145,7 +144,21 @@ async def get_tenant(tenant_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Tenant not found")
     return tenant
 
-
+# ---------------- DELETE TENANT ----------------
+@router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tenant(tenant_id: str, db: Session = Depends(get_db)):
+    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    try:
+        db.delete(tenant)
+        db.commit()
+        return HTTPException(status_code=204, detail="Tenant deleted successfully") 
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting tenant: {str(e)}")
+    
 # ---------------- GET USERS ----------------
 @router.get("/users", response_model=List[UserInfo])
 async def get_all_users(db: Session = Depends(get_db)):
