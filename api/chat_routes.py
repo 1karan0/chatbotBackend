@@ -45,8 +45,7 @@ async def ask_question(
 
 @router.get("/embed-code", status_code=status.HTTP_200_OK)
 async def get_embed_code(
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    tenant_id: str
 ):
     """Get embed code for integrating the chatbot into a website."""
     embed_code = f"""<!-- AI Chatbot Widget -->
@@ -55,8 +54,6 @@ async def get_embed_code(
     var chatbotConfig = {{
       tenantId: '{tenant_id}',
       apiEndpoint: 'YOUR_API_ENDPOINT_HERE',
-      primaryColor: '#2563eb',
-      position: 'bottom-right'
     }};
 
     // Load chatbot widget

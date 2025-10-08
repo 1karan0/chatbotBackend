@@ -398,7 +398,7 @@ async def add_multiple_files(
 
 @router.get("/sources", response_model=List[KnowledgeSourceInfo])
 async def list_knowledge_sources(
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str,
     db: Session = Depends(get_db)
 ):
     """List all knowledge sources for the current tenant."""
@@ -411,7 +411,7 @@ async def list_knowledge_sources(
 @router.delete("/sources/{source_id}", status_code=status.HTTP_200_OK)
 async def delete_knowledge_source(
     source_id: str,
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str,
     db: Session = Depends(get_db)
 ):
     """Delete a knowledge source."""
@@ -433,7 +433,7 @@ async def delete_knowledge_source(
 
 @router.post("/rebuild-index", status_code=status.HTTP_200_OK)
 async def rebuild_tenant_index(
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str,
     db: Session = Depends(get_db)
 ):
     """Rebuild the search index for the current tenant."""
