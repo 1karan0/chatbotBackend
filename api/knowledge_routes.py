@@ -246,7 +246,7 @@ async def add_file_source(
             detail="File name is required"
         )
 
-    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx']
+    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx','.PDF', '.DOCX']
     if not any(file.filename.endswith(ext) for ext in allowed_extensions):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
