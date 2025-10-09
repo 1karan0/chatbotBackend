@@ -35,11 +35,12 @@ class TenantInfo(BaseModel):
     """Response model for tenant information."""
     tenant_id: str
     tenant_name: str
-    created_at: datetime
+    created_at: datetime    
     is_active: bool
     
     class Config:
         from_attributes = True # Enable ORM mode
+        orm_mode = True
 
 class UserCreate(BaseModel):
     """Request model for creating a new user."""
@@ -49,6 +50,7 @@ class UserCreate(BaseModel):
     
     class Config:
         from_attributes = True
+        orm_mode = True
 
 class UserInfo(BaseModel):
     """Response model for user information."""
@@ -85,6 +87,7 @@ class KnowledgeSourceInfo(BaseModel):
 
     class Config:
         from_attributes = True
+        orm_mode = True
 
 class ProcessingStatus(BaseModel):
     """Response model for processing status."""

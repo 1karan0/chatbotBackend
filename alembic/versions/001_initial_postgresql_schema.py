@@ -17,7 +17,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table('tenants',
-    sa.Column('tenant_id', postgresql.UUID(as_uuid=True), nullable=False),
+    sa.Column('tenant_id', sa.String(), nullable=False),
     sa.Column('tenant_name', sa.String(), nullable=False),
     sa.Column('is_active', sa.Boolean(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
@@ -26,7 +26,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('tenant_name')
     )
 
-    op.create_table('users',
+    op.create_table('backendusers',
     sa.Column('user_id', postgresql.UUID(as_uuid=True), nullable=False),
     sa.Column('username', sa.String(), nullable=False),
     sa.Column('hashed_password', sa.String(), nullable=True),
@@ -56,7 +56,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('source_id')
     )
 
-    op.create_index('idx_users_tenant_id', 'users', ['tenant_id'])
+    op.create_index('idx_users_tenant_id', 'backendusers', ['tenant_id'])
     op.create_index('idx_knowledge_sources_tenant_id', 'knowledge_sources', ['tenant_id'])
     op.create_index('idx_knowledge_sources_status', 'knowledge_sources', ['status'])
 
@@ -64,7 +64,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index('idx_knowledge_sources_status', table_name='knowledge_sources')
     op.drop_index('idx_knowledge_sources_tenant_id', table_name='knowledge_sources')
-    op.drop_index('idx_users_tenant_id', table_name='users')
+    op.drop_index('idx_users_tenant_id', table_name='backendusers')
     op.drop_table('knowledge_sources')
-    op.drop_table('users')
+    op.drop_table('backendusers')
     op.drop_table('tenants')
