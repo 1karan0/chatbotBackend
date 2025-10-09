@@ -18,7 +18,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade():
-    # ### tenants table ###
+    # STEP 1: Drop all foreign keys first
+    op.drop_constraint('backendusers_tenant_id_fkey', 'backendusers', type_='foreignkey')
+    op.drop_constraint('knowledge_sources_tenant_id_fkey', 'knowledge_sources', type_='foreignkey')
+
+    # STEP 2: Convert all tenant_id columns from UUID to VARCHAR
+    # Convert tenants table
     op.alter_column(
         'tenants',
         'tenant_id',
@@ -28,9 +33,7 @@ def upgrade():
         postgresql_using='tenant_id::text'
     )
 
-    # ### backendusers table ###
-    # drop FK first
-    op.drop_constraint('backendusers_tenant_id_fkey', 'backendusers', type_='foreignkey')
+    # Convert backendusers table
     op.alter_column(
         'backendusers',
         'tenant_id',
@@ -39,16 +42,8 @@ def upgrade():
         existing_nullable=False,
         postgresql_using='tenant_id::text'
     )
-    # recreate FK
-    op.create_foreign_key(
-        'backendusers_tenant_id_fkey',
-        'backendusers', 'tenants',
-        ['tenant_id'], ['tenant_id'],
-        ondelete='CASCADE'
-    )
 
-    # ### knowledge_sources table ###
-    op.drop_constraint('knowledge_sources_tenant_id_fkey', 'knowledge_sources', type_='foreignkey')
+    # Convert knowledge_sources table
     op.alter_column(
         'knowledge_sources',
         'tenant_id',
@@ -57,6 +52,15 @@ def upgrade():
         existing_nullable=False,
         postgresql_using='tenant_id::text'
     )
+
+    # STEP 3: Recreate all foreign keys
+    op.create_foreign_key(
+        'backendusers_tenant_id_fkey',
+        'backendusers', 'tenants',
+        ['tenant_id'], ['tenant_id'],
+        ondelete='CASCADE'
+    )
+
     op.create_foreign_key(
         'knowledge_sources_tenant_id_fkey',
         'knowledge_sources', 'tenants',
