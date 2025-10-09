@@ -24,7 +24,8 @@ def upgrade():
         'tenant_id',
         existing_type=postgresql.UUID(),
         type_=sa.String(),
-        existing_nullable=False
+        existing_nullable=False,
+        postgresql_using='tenant_id::text'
     )
 
     # ### backendusers table ###
@@ -35,7 +36,8 @@ def upgrade():
         'tenant_id',
         existing_type=postgresql.UUID(),
         type_=sa.String(),
-        existing_nullable=False
+        existing_nullable=False,
+        postgresql_using='tenant_id::text'
     )
     # recreate FK
     op.create_foreign_key(
@@ -52,7 +54,8 @@ def upgrade():
         'tenant_id',
         existing_type=postgresql.UUID(),
         type_=sa.String(),
-        existing_nullable=False
+        existing_nullable=False,
+        postgresql_using='tenant_id::text'
     )
     op.create_foreign_key(
         'knowledge_sources_tenant_id_fkey',
