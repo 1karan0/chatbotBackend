@@ -35,11 +35,11 @@ class Settings(BaseSettings):
     retrieval_k: int = 4
 
     # PostgreSQL Settings
-    pg_user: str
-    pg_db: str
-    pg_password: str
-    pg_port: int
-    
+    pg_user: str = os.getenv("PG_USER", "")
+    pg_db: str = os.getenv("PG_DB", "")
+    pg_password: str = os.getenv("PG_PASSWORD", "")
+    pg_port: int = int(os.getenv("PG_PORT", "5432"))
+
     class Config:
         env_file = ".env"
 
