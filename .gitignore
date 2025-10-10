@@ -9,7 +9,6 @@ __pycache__
 dist
 build
 *.log
-*.sqlite3
 *.db
 *.egg-info
 coverage
