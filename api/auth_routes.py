@@ -68,7 +68,7 @@ async def create_tenant(
     if not tenant_id or not tenant_name or not username :
         raise HTTPException(
             status_code=400,
-            detail="tenant_id, tenant_name, username, and password are required"
+            detail="tenant_id, tenant_name, username are required"
         )
     
     if db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first():

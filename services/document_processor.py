@@ -1,5 +1,6 @@
-from typing import List, Dict, Any
+from typing import List
 import io
+import re
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
@@ -23,85 +24,65 @@ class DocumentProcessor:
             length_function=len,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
+        self.batch_size = 100  # number of chunks per embedding request
+
+    def sanitize_text(self, text: str) -> str:
+        """Remove null bytes to prevent Postgres errors."""
+        return re.sub(r"[\x00]", "", text)
 
     def process_text(self, text: str, source: str, tenant_id: str) -> List[Document]:
-        """
-        Process text content into document chunks.
-
-        Args:
-            text: Raw text content
-            source: Source identifier (URL, filename, etc.)
-            tenant_id: Tenant identifier
-
-        Returns:
-            List of Document objects with metadata
-        """
+        """Split text into chunks and attach metadata."""
+        text = self.sanitize_text(text)
         documents = [Document(
             page_content=text,
-            metadata={
-                "source": source,
-                "tenant_id": tenant_id
-            }
+            metadata={"source": source, "tenant_id": tenant_id}
         )]
-
         chunks = self.text_splitter.split_documents(documents)
         return chunks
 
-    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for a list of texts.
+    async def generate_embeddings(self, chunks: List[Document]) -> List[List[float]]:
+        """Generate embeddings for document chunks in safe batches."""
+        all_texts = [c.page_content for c in chunks]
+        embeddings_list = []
 
-        Args:
-            texts: List of text strings
+        for i in range(0, len(all_texts), self.batch_size):
+            batch = all_texts[i:i + self.batch_size]
+            try:
+                batch_embeddings = await self.embeddings.aembed_documents(batch)
+                embeddings_list.extend(batch_embeddings)
+            except Exception as e:
+                print(f"Error generating embeddings for batch {i}-{i+len(batch)}: {e}")
 
-        Returns:
-            List of embedding vectors
-        """
-        try:
-            embeddings = await self.embeddings.aembed_documents(texts)
-            return embeddings
-        except Exception as e:
-            print(f"Error generating embeddings: {e}")
-            return []
+        return embeddings_list
 
     def extract_file_content(self, file_content: bytes, file_name: str) -> str:
-        """
-        Extract text content from file bytes.
-
-        Args:
-            file_content: File content in bytes
-            file_name: Name of the file
-
-        Returns:
-            Extracted text content
-        """
+        """Extract text content from file bytes and sanitize."""
         try:
-            if file_name.endswith('.txt') or file_name.endswith('.md'):
-                return file_content.decode('utf-8')
+            if file_name.endswith(('.txt', '.md', '.csv')):
+                text = file_content.decode('utf-8', errors='ignore')
             elif file_name.endswith('.pdf'):
                 try:
                     from pypdf import PdfReader
                     pdf_file = io.BytesIO(file_content)
                     pdf_reader = PdfReader(pdf_file)
-                    text = ""
-                    for page in pdf_reader.pages:
-                        text += page.extract_text() + "\n"
-                    return text
+                    text = "\n".join([page.extract_text() or "" for page in pdf_reader.pages])
                 except Exception as e:
                     print(f"Error extracting PDF: {e}")
-                    return file_content.decode('utf-8', errors='ignore')
+                    text = file_content.decode('utf-8', errors='ignore')
             elif file_name.endswith('.docx'):
                 try:
                     from docx import Document as DocxDocument
                     doc_file = io.BytesIO(file_content)
                     doc = DocxDocument(doc_file)
-                    text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-                    return text
+                    text = "\n".join([p.text for p in doc.paragraphs])
                 except Exception as e:
                     print(f"Error extracting DOCX: {e}")
-                    return file_content.decode('utf-8', errors='ignore')
+                    text = file_content.decode('utf-8', errors='ignore')
             else:
-                return file_content.decode('utf-8', errors='ignore')
+                text = file_content.decode('utf-8', errors='ignore')
+
+            return self.sanitize_text(text)
+
         except Exception as e:
             print(f"Error extracting file content: {e}")
             return ""

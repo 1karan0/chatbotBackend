@@ -240,13 +240,18 @@ async def add_file_source(
     db: Session = Depends(get_db)
 ):
     """Upload a file as a knowledge source."""
+    
+    def sanitize_text(text: str) -> str:
+        """Remove null bytes to prevent PostgreSQL errors."""
+        return text.replace("\x00", "")
+
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File name is required"
         )
 
-    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx','.PDF', '.DOCX']
+    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx', '.PDF', '.DOCX']
     if not any(file.filename.endswith(ext) for ext in allowed_extensions):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -256,6 +261,7 @@ async def add_file_source(
     try:
         file_content = await file.read()
         text_content = document_processor.extract_file_content(file_content, file.filename)
+        text_content = sanitize_text(text_content)
 
         if not text_content.strip():
             raise HTTPException(
@@ -270,18 +276,35 @@ async def add_file_source(
             file_content=text_content,
             status="processing"
         )
-        db.add(source)
-        db.commit()
-        db.refresh(source)
 
+        db.add(source)
+        try:
+            db.commit()
+            db.refresh(source)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Database commit failed: {str(e)}"
+            )
+
+        # Process with your retrieval service
         await retrieval_service.add_documents_to_index(
             text=text_content,
             source=file.filename,
             tenant_id=tenant_id
         )
 
+        # Update status to completed
         source.status = "completed"
-        db.commit()
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update status: {str(e)}"
+            )
 
         return ProcessingStatus(
             source_id=source.source_id,
@@ -295,7 +318,10 @@ async def add_file_source(
         if 'source' in locals():
             source.status = "failed"
             source.error_message = str(e)
-            db.commit()
+            try:
+                db.commit()
+            except:
+                db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing file: {str(e)}"
