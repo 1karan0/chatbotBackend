@@ -1,4 +1,5 @@
 import os
+os.environ["LANGCHAIN_TELEMETRY"] = "false"
 import sys
 import uvicorn
 from fastapi import FastAPI, HTTPException

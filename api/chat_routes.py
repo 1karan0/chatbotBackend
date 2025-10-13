@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from fastapi import Query
 
 from models.schemas import QuestionRequest, QuestionResponse
 from auth.dependencies import get_tenant_id, get_current_user
@@ -43,43 +44,15 @@ async def ask_question(
             detail=f"Error processing question: {str(e)}"
         )
 
-@router.get("/embed-code", status_code=status.HTTP_200_OK)
-async def get_embed_code(
-    tenant_id: str
-):
-    """Get embed code for integrating the chatbot into a website."""
-    embed_code = f"""<!-- AI Chatbot Widget -->
-<script>
-  (function() {{
-    var chatbotConfig = {{
-      tenantId: '{tenant_id}',
-      apiEndpoint: 'YOUR_API_ENDPOINT_HERE',
-    }};
-
-    // Load chatbot widget
-    var script = document.createElement('script');
-    script.src = 'YOUR_WIDGET_URL_HERE/chatbot-widget.js';
-    script.async = true;
-    document.body.appendChild(script);
-  }})();
-</script>
-<!-- End AI Chatbot Widget -->"""
-
-    return {
-        "tenant_id": tenant_id,
-        "embed_code": embed_code,
-        "instructions": "Copy and paste this code before the closing </body> tag of your website"
-    }
 
 @router.get("/status", status_code=status.HTTP_200_OK)
 async def get_chat_status(
-    tenant_id: str = Depends(get_tenant_id),
-    current_user: User = Depends(get_current_user)
+    tenant_id: str = Query(..., description="Tenant ID for the chatbot"),
+    db: Session = Depends(get_db)
 ):
-    """Get chatbot status for the current tenant."""
+    """Get chatbot status for the given tenant_id."""
     try:
         doc_count = retrieval_service.get_tenant_document_count(tenant_id)
-
         return {
             "tenant_id": tenant_id,
             "document_count": doc_count,

@@ -73,22 +73,15 @@ async def create_tenant(
     
     if db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first():
         raise HTTPException(status_code=400, detail="Tenant ID already exists")
-    if db.query(User).filter(User.username == username).first():
-        raise HTTPException(status_code=400, detail="Username already exists")
-    
+
     try:
         tenant = Tenant(tenant_id=tenant_id, tenant_name=tenant_name)
         db.add(tenant)
         db.flush()
         
-        # hashed_password = jwt_handler.hash_password(password)
-        user = User(username=username, tenant_id=tenant.tenant_id)
-        db.add(user)
-        
         data_loader.create_tenant_directory(tenant_id)
         
         db.commit()
-        return user
         
     except Exception as e:
         db.rollback()

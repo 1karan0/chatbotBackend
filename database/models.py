@@ -7,6 +7,7 @@ import uuid
 
 Base = declarative_base()
 
+# ---------- TENANTS ----------
 class Tenant(Base):
     """Tenant model for multi-tenant architecture."""
     __tablename__ = "tenants"
@@ -17,33 +18,42 @@ class Tenant(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    backendusers = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
+    # Relationships
+    users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
     knowledge_sources = relationship("KnowledgeSource", back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Tenant(id={self.tenant_id}, name={self.tenant_name})>"
 
 
+# ---------- USERS ----------
 class User(Base):
-    """User model for authentication and tenant association."""
-    __tablename__ = "backendusers"
+    """User model aligned with Prisma 'users' table."""
+    __tablename__ = "users"
 
-    user_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    username = Column(String, nullable=False, unique=True)
-    hashed_password = Column(String, nullable=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    email = Column(String(255), unique=True, nullable=False)
+    image = Column(String, nullable=True)
+    bio = Column(Text, nullable=True)
+    location = Column(String(255), nullable=True)
+    website = Column(String(500), nullable=True)
+    workspace = Column(String(255), nullable=True)
+    tenantsTenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.tenant_id", ondelete="SET NULL"), nullable=True)
 
-    tenant = relationship("Tenant", back_populates="backendusers")
+    createdAt = Column(DateTime(timezone=True), server_default=func.now())
+    updatedAt = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    tenant = relationship("Tenant", back_populates="users")
 
     def __repr__(self):
-        return f"<User(id={self.user_id}, username={self.username}, tenant={self.tenant_id})>"
+        return f"<User(id={self.id}, email={self.email}, tenant={self.tenantsTenant_id})>"
 
 
+# ---------- KNOWLEDGE SOURCES ----------
 class KnowledgeSource(Base):
-    """Knowledge source model for storing URLs, text, and files."""
+    """Knowledge source model aligned with Prisma 'knowledge_sources' table."""
     __tablename__ = "knowledge_sources"
 
     source_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -59,6 +69,7 @@ class KnowledgeSource(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # Relationship
     tenant = relationship("Tenant", back_populates="knowledge_sources")
 
     def __repr__(self):

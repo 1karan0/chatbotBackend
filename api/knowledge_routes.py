@@ -233,100 +233,6 @@ async def add_text_source(
             detail=f"Error processing text: {str(e)}"
         )
 
-@router.post("/sources/file", response_model=ProcessingStatus, status_code=status.HTTP_201_CREATED)
-async def add_file_source(
-    file: UploadFile = File(...),
-    tenant_id: str = File(...),
-    db: Session = Depends(get_db)
-):
-    """Upload a file as a knowledge source."""
-    
-    def sanitize_text(text: str) -> str:
-        """Remove null bytes to prevent PostgreSQL errors."""
-        return text.replace("\x00", "")
-
-    if not file.filename:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File name is required"
-        )
-
-    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx', '.PDF', '.DOCX']
-    if not any(file.filename.endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type not supported. Allowed: {', '.join(allowed_extensions)}"
-        )
-
-    try:
-        file_content = await file.read()
-        text_content = document_processor.extract_file_content(file_content, file.filename)
-        text_content = sanitize_text(text_content)
-
-        if not text_content.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not extract text from file"
-            )
-
-        source = KnowledgeSource(
-            tenant_id=tenant_id,
-            source_type="file",
-            file_name=file.filename,
-            file_content=text_content,
-            status="processing"
-        )
-
-        db.add(source)
-        try:
-            db.commit()
-            db.refresh(source)
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database commit failed: {str(e)}"
-            )
-
-        # Process with your retrieval service
-        await retrieval_service.add_documents_to_index(
-            text=text_content,
-            source=file.filename,
-            tenant_id=tenant_id
-        )
-
-        # Update status to completed
-        source.status = "completed"
-        try:
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to update status: {str(e)}"
-            )
-
-        return ProcessingStatus(
-            source_id=source.source_id,
-            status="completed",
-            message="File processed successfully"
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        if 'source' in locals():
-            source.status = "failed"
-            source.error_message = str(e)
-            try:
-                db.commit()
-            except:
-                db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing file: {str(e)}"
-        )
-
 @router.post("/sources/files/batch", status_code=status.HTTP_201_CREATED)
 async def add_multiple_files(
     files: List[UploadFile] = File(...),
@@ -421,6 +327,102 @@ async def add_multiple_files(
             "failed": failed
         }
     }
+
+
+@router.post("/sources/file", response_model=ProcessingStatus, status_code=status.HTTP_201_CREATED)
+async def add_file_source(
+    file: UploadFile = File(...),
+    tenant_id: str = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload a file as a knowledge source."""
+    
+    def sanitize_text(text: str) -> str:
+        """Remove null bytes to prevent PostgreSQL errors."""
+        return text.replace("\x00", "")
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File name is required"
+        )
+
+    allowed_extensions = ['.txt', '.md', '.csv', '.pdf', '.docx', '.PDF', '.DOCX']
+    if not any(file.filename.endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not supported. Allowed: {', '.join(allowed_extensions)}"
+        )
+
+    try:
+        file_content = await file.read()
+        text_content = document_processor.extract_file_content(file_content, file.filename)
+        text_content = sanitize_text(text_content)
+
+        if not text_content.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Could not extract text from file"
+            )
+
+        source = KnowledgeSource(
+            tenant_id=tenant_id,
+            source_type="file",
+            file_name=file.filename,
+            file_content=text_content,
+            status="processing"
+        )
+
+        db.add(source)
+        try:
+            db.commit()
+            db.refresh(source)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Database commit failed: {str(e)}"
+            )
+
+        # Process with your retrieval service
+        await retrieval_service.add_documents_to_index(
+            text=text_content,
+            source=file.filename,
+            tenant_id=tenant_id
+        )
+
+        # Update status to completed
+        source.status = "completed"
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update status: {str(e)}"
+            )
+
+        return ProcessingStatus(
+            source_id=source.source_id,
+            status="completed",
+            message="File processed successfully"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if 'source' in locals():
+            source.status = "failed"
+            source.error_message = str(e)
+            try:
+                db.commit()
+            except:
+                db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing file: {str(e)}"
+        )
+
 
 @router.get("/sources", response_model=List[KnowledgeSourceInfo])
 async def list_knowledge_sources(
