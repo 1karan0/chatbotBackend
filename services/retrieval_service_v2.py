@@ -1,24 +1,71 @@
-import os
 import sys
 from typing import List, Dict, Any
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from config.settings import settings
 
-# Fix SQLite for ChromaDB compatibility
+# ✅ Fix SQLite for ChromaDB compatibility
 try:
     __import__('pysqlite3')
     sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 except ImportError:
     pass
 
-from config.settings import settings
+
+# ===============================
+# 🚀 Suggestion Question Generator
+# ===============================
+class SuggestionQuestionGenerator:
+    """Generates relevant chatbot starter questions from content."""
+
+    def __init__(self, llm_model: str):
+        self.llm = ChatOpenAI(model=llm_model, temperature=0.7)
+        self.prompt_template = ChatPromptTemplate.from_template("""
+You are an assistant that creates engaging chatbot starter questions.
+
+Given the following knowledge content, generate 3 to 5 short, natural, and diverse questions that a user might ask to explore this content.
+
+The questions should:
+- Be conversational, not robotic
+- Be relevant to the content
+- Cover different types (facts, how-to, summaries, etc.)
+
+Context:
+{context}
+
+Questions:
+""")
+
+    def generate(self, docs: List[Document]) -> List[str]:
+        if not docs:
+            return [
+                "What can you do?",
+                "Tell me something interesting.",
+                "How can I use this chatbot?",
+            ]
+
+        # Limit context length for prompt
+        context_text = "\n\n".join([doc.page_content[:800] for doc in docs[:5]])
+        final_prompt = self.prompt_template.format(context=context_text)
+        response = self.llm.invoke(final_prompt)
+
+        # Clean up lines into questions
+        questions = [
+            q.strip(" -•1234567890.").strip()
+            for q in response.content.splitlines()
+            if q.strip()
+        ]
+        return questions[:5]
 
 
+# ===============================
+# 📌 RetrievalServiceV2
+# ===============================
 class RetrievalServiceV2:
-    """Enhanced retrieval service with dynamic knowledge management."""
+    """Enhanced retrieval service with dynamic knowledge & suggestions."""
 
     def __init__(self):
         self.embeddings = OpenAIEmbeddings(model=settings.embedding_model)
@@ -31,6 +78,8 @@ class RetrievalServiceV2:
             length_function=len,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
+
+        # prompt for answering user queries
         self.prompt_template = """You are a helpful AI assistant. Answer the user's question using only the provided context.
 If the answer is not in the context, politely say you don't have that information.
 
@@ -42,6 +91,16 @@ Question: {question}
 Answer:"""
         self.prompt = ChatPromptTemplate.from_template(self.prompt_template)
 
+        # Suggestion question generator
+        self.suggestion_generator = SuggestionQuestionGenerator(settings.chat_model)
+
+        # Temporary in-memory store for suggestions
+        # In production, replace this with a database or Redis
+        self.suggestion_cache: Dict[str, List[str]] = {}
+
+    # --------------------------
+    # 🧱 Initialize / Load DB
+    # --------------------------
     def initialize_database(self) -> bool:
         """Initialize or load the vector database."""
         try:
@@ -49,41 +108,45 @@ Answer:"""
                 persist_directory=self.chroma_path,
                 embedding_function=self.embeddings
             )
-            print(f"Loaded/Created Chroma DB at {self.chroma_path}")
+            print(f"✅ Loaded/Created Chroma DB at {self.chroma_path}")
             return True
         except Exception as e:
-            print(f"Error initializing database: {e}")
+            print(f"❌ Error initializing database: {e}")
             return False
 
+    # --------------------------
+    # ➕ Add Documents
+    # --------------------------
     async def add_documents_to_index(self, text: str, source: str, tenant_id: str) -> bool:
-        """Add documents to the vector index."""
+        """Add documents to the vector index and update suggestions."""
         try:
             if not self.vector_db:
                 self.initialize_database()
 
-            # Convert UUID to string for metadata
             tenant_id_str = str(tenant_id)
-
             document = Document(
                 page_content=text,
-                metadata={
-                    "source": source,
-                    "tenant_id": tenant_id_str
-                }
+                metadata={"source": source, "tenant_id": tenant_id_str}
             )
 
             chunks = self.text_splitter.split_documents([document])
             if chunks:
                 self.vector_db.add_documents(chunks)
                 self.vector_db.persist()
-                print(f"Added {len(chunks)} chunks for tenant {tenant_id_str} from {source}")
+                print(f"🟢 Added {len(chunks)} chunks for tenant {tenant_id_str} from {source}")
+
+                # Generate suggestions after adding
+                self.update_tenant_suggestions(tenant_id_str)
                 return True
 
             return False
         except Exception as e:
-            print(f"Error adding documents to index: {e}")
+            print(f"❌ Error adding documents to index: {e}")
             return False
 
+    # --------------------------
+    # 🧹 Clear Documents
+    # --------------------------
     def clear_tenant_documents(self, tenant_id: str) -> bool:
         """Clear all documents for a specific tenant."""
         try:
@@ -96,13 +159,18 @@ Answer:"""
             if results and results['ids']:
                 self.vector_db.delete(ids=results['ids'])
                 self.vector_db.persist()
-                print(f"Cleared {len(results['ids'])} documents for tenant {tenant_id_str}")
+                print(f"🧼 Cleared {len(results['ids'])} documents for tenant {tenant_id_str}")
 
+            # Clear suggestions too
+            self.suggestion_cache.pop(tenant_id_str, None)
             return True
         except Exception as e:
-            print(f"Error clearing tenant documents: {e}")
+            print(f"❌ Error clearing tenant documents: {e}")
             return False
 
+    # --------------------------
+    # 🧠 Answer Questions
+    # --------------------------
     def answer_question(self, question: str, tenant_id: str) -> Dict[str, Any]:
         """Generate answer for a question using tenant-filtered retrieval."""
         if not self.vector_db:
@@ -146,13 +214,16 @@ Answer:"""
                 "tenant_id": tenant_id_str
             }
         except Exception as e:
-            print(f"Error answering question: {e}")
+            print(f"❌ Error answering question: {e}")
             return {
                 "answer": f"Error processing question: {str(e)}",
                 "sources": [],
                 "tenant_id": str(tenant_id)
             }
 
+    # --------------------------
+    # 📊 Document Count
+    # --------------------------
     def get_tenant_document_count(self, tenant_id: str) -> int:
         """Get the number of documents for a tenant."""
         try:
@@ -163,8 +234,34 @@ Answer:"""
             results = self.vector_db.get(where={"tenant_id": tenant_id_str})
             return len(results['ids']) if results and results['ids'] else 0
         except Exception as e:
-            print(f"Error getting document count: {e}")
+            print(f"❌ Error getting document count: {e}")
             return 0
+
+    # --------------------------
+    # 💡 Suggestion Handling
+    # --------------------------
+    def update_tenant_suggestions(self, tenant_id: str):
+        """Generate and store suggestion questions for a tenant."""
+        try:
+            tenant_docs = self.vector_db.get(where={"tenant_id": tenant_id})
+            if tenant_docs and tenant_docs['documents']:
+                docs = [
+                    Document(page_content=d, metadata=m)
+                    for d, m in zip(tenant_docs['documents'], tenant_docs['metadatas'])
+                ]
+                suggestions = self.suggestion_generator.generate(docs)
+                self.suggestion_cache[tenant_id] = suggestions
+                print(f"✨ Generated {len(suggestions)} suggestions for tenant {tenant_id}")
+        except Exception as e:
+            print(f"❌ Error generating suggestions: {e}")
+
+    def get_tenant_suggestions(self, tenant_id: str) -> List[str]:
+        """Retrieve stored suggestion questions for a tenant."""
+        return self.suggestion_cache.get(str(tenant_id), [
+            "What can you do?",
+            "Tell me something interesting.",
+            "How can I use this chatbot?"
+        ])
 
 
 # Singleton instance
