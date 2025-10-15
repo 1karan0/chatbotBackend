@@ -16,3 +16,4 @@ htmlcov
 .pytest_cache
 .mypy_cache
 app.db
+./chroma_db
