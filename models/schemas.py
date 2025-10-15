@@ -30,6 +30,7 @@ class QuestionResponse(BaseModel):
     answer: str = Field(..., description="The answer to the question")
     sources: List[str] = Field(..., description="Sources used for the answer")
     tenant_id: UUID = Field(..., description="Tenant ID that provided the answer")
+    suggestions: Optional[List[str]] = [] 
 
 
 # 🏢 ---------------- TENANT ----------------

@@ -328,7 +328,6 @@ async def add_multiple_files(
         }
     }
 
-
 @router.post("/sources/file", response_model=ProcessingStatus, status_code=status.HTTP_201_CREATED)
 async def add_file_source(
     file: UploadFile = File(...),
@@ -422,7 +421,6 @@ async def add_file_source(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing file: {str(e)}"
         )
-
 
 @router.get("/sources", response_model=List[KnowledgeSourceInfo])
 async def list_knowledge_sources(

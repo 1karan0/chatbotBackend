@@ -36,7 +36,8 @@ async def ask_question(
         return QuestionResponse(
             answer=result["answer"],
             sources=result["sources"],
-            tenant_id=result["tenant_id"]
+            tenant_id=result["tenant_id"],
+            suggestions=result["suggestions"]
         )
     except Exception as e:
         raise HTTPException(

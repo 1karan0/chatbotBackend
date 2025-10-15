@@ -172,54 +172,74 @@ Answer:"""
     # 🧠 Answer Questions
     # --------------------------
     def answer_question(self, question: str, tenant_id: str) -> Dict[str, Any]:
-        """Generate answer for a question using tenant-filtered retrieval."""
-        if not self.vector_db:
-            self.initialize_database()
+     """Generate answer for a question using tenant-filtered retrieval and dynamic suggestions."""
+     if not self.vector_db:
+        self.initialize_database()
 
-        if not self.vector_db:
+     if not self.vector_db:
+        return {
+            "answer": "Error: Knowledge base not available. Please add some content first.",
+            "sources": [],
+            "tenant_id": str(tenant_id),
+            "suggestions": self.get_tenant_suggestions(str(tenant_id))
+        }
+
+     try:
+         tenant_id_str = str(tenant_id)
+         tenant_filter = {"tenant_id": tenant_id_str}
+
+         retriever = self.vector_db.as_retriever(
+            search_kwargs={
+                "k": settings.retrieval_k,
+                "filter": tenant_filter
+            }
+        )
+
+         docs = retriever.invoke(question)
+         if not docs:
+            suggestions = self.get_tenant_suggestions(tenant_id_str)
             return {
-                "answer": "Error: Knowledge base not available. Please add some content first.",
+                "answer": "I don't have any information to answer that question. Please add relevant content to the knowledge base.",
                 "sources": [],
-                "tenant_id": str(tenant_id)
+                "tenant_id": tenant_id_str,
+                "suggestions": suggestions
             }
 
-        try:
-            tenant_id_str = str(tenant_id)
-            tenant_filter = {"tenant_id": tenant_id_str}
+         context_text = "\n\n".join([doc.page_content for doc in docs])
+         sources = [doc.metadata.get("source", "Unknown") for doc in docs]
 
-            retriever = self.vector_db.as_retriever(
-                search_kwargs={
-                    "k": settings.retrieval_k,
-                    "filter": tenant_filter
-                }
-            )
+        # Generate answer
+         final_prompt = self.prompt.format(context=context_text, question=question)
+         response = self.llm.invoke(final_prompt)
 
-            docs = retriever.get_relevant_documents(question)
-            if not docs:
-                return {
-                    "answer": "I don't have any information to answer that question. Please add relevant content to the knowledge base.",
-                    "sources": [],
-                    "tenant_id": tenant_id_str
-                }
+        # Generate suggestions from docs
+         suggestions = self.suggestion_generator.generate(docs)
 
-            context_text = "\n\n".join([doc.page_content for doc in docs])
-            sources = [doc.metadata.get("source", "Unknown") for doc in docs]
+        # Remove the user's question if it matches a suggestion
+         suggestions = [s for s in suggestions if question.lower() not in s.lower()]
 
-            final_prompt = self.prompt.format(context=context_text, question=question)
-            response = self.llm.invoke(final_prompt)
+        # Regenerate if too few suggestions
+         if len(suggestions) < 3:
+            suggestions = self.suggestion_generator.generate(docs)
 
-            return {
-                "answer": response.content.strip(),
-                "sources": list(set(sources)),
-                "tenant_id": tenant_id_str
-            }
-        except Exception as e:
-            print(f"❌ Error answering question: {e}")
-            return {
-                "answer": f"Error processing question: {str(e)}",
-                "sources": [],
-                "tenant_id": str(tenant_id)
-            }
+        # Update cache for dynamic refresh next time
+         self.suggestion_cache[tenant_id_str] = suggestions
+
+         return {
+            "answer": response.content.strip(),
+            "sources": list(set(sources)),
+            "tenant_id": tenant_id_str,
+            "suggestions": suggestions
+        }
+
+     except Exception as e:
+        print(f"❌ Error answering question: {e}")
+        return {
+            "answer": f"Error processing question: {str(e)}",
+            "sources": [],
+            "tenant_id": str(tenant_id),
+            "suggestions": self.get_tenant_suggestions(str(tenant_id))
+        }
 
     # --------------------------
     # 📊 Document Count
