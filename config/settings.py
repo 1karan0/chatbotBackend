@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     algorithm: str = os.getenv("ALGORITHM", "HS256")
     
     # Database Settings
-    database_url: str = os.getenv("DATABASE_URL", "postgresql://charbot_user:5E4TfARMyCzcSqsOEqckkbYCRG2kMVED@dpg-d3ads5gdl3ps73enmr5g-a.singapore-postgres.render.com/charbot")
+    database_url: str = os.getenv("DATABASE_URL", "postgresql://chatbot_eni9_user:aohKgZKRws7r3X4TmLyJsPtMaY8cTdoE@dpg-d3vftpur433s73crgvog-a.singapore-postgres.render.com/chatbot_eni9")
     chroma_path: str = os.getenv("CHROMA_PATH", "./chroma_db")
     data_path: str = os.getenv("DATA_PATH", "./data")
     

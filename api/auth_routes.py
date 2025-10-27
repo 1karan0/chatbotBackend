@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from database.connection import get_db
-from database.models import User, Tenant
+from database.models import Users, Tenants
 from auth.jwt_handler import jwt_handler
 from services.data_loader import data_loader
 from config.settings import settings
@@ -25,7 +25,7 @@ async def login_for_access_token(
     username = form_data.username
     password = form_data.password
 
-    user = db.query(User).filter(User.username == username).first()
+    user = db.query(Users).filter(Users.username == username).first()
     
     if not user or not jwt_handler.verify_password(password, user.hashed_password):
         raise HTTPException(
@@ -71,11 +71,11 @@ async def create_tenant(
             detail="tenant_id, tenant_name, username are required"
         )
     
-    if db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first():
+    if db.query(Tenants).filter(Tenants.tenant_id == tenant_id).first():
         raise HTTPException(status_code=400, detail="Tenant ID already exists")
 
     try:
-        tenant = Tenant(tenant_id=tenant_id, tenant_name=tenant_name)
+        tenant = Tenants(tenant_id=tenant_id, tenant_name=tenant_name)
         db.add(tenant)
         db.flush()
         
@@ -105,15 +105,15 @@ async def create_user(
             detail="tenant_id, username, and password are required"
         )
     
-    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    tenant = db.query(Tenants).filter(Tenants.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    if db.query(User).filter(User.username == username).first():
+    if db.query(Users).filter(Users.username == username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
     
     try:
         hashed_password = jwt_handler.hash_password(password)
-        user = User(username=username, hashed_password=password, tenant_id=tenant_id)
+        user = Users(username=username, hashed_password=password, tenant_id=tenant_id)
         db.add(user)
         db.commit()
         
@@ -127,12 +127,12 @@ async def create_user(
 # ---------------- GET TENANTS ----------------
 @router.get("/tenants", response_model=List[TenantInfo])
 async def get_all_tenants(db: Session = Depends(get_db)):
-    return db.query(Tenant).all()
+    return db.query(Tenants).all()
 
 
 @router.get("/tenants/{tenant_id}", response_model=TenantInfo)
 async def get_tenant(tenant_id: str, db: Session = Depends(get_db)):
-    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    tenant = db.query(Tenants).filter(Tenants.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     return tenant
@@ -140,7 +140,7 @@ async def get_tenant(tenant_id: str, db: Session = Depends(get_db)):
 # ---------------- DELETE TENANT ----------------
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tenant(tenant_id: str, db: Session = Depends(get_db)):
-    tenant = db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+    tenant = db.query(Tenants).filter(Tenants.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     
@@ -155,12 +155,12 @@ async def delete_tenant(tenant_id: str, db: Session = Depends(get_db)):
 # ---------------- GET USERS ----------------
 @router.get("/users", response_model=List[UserInfo])
 async def get_all_users(db: Session = Depends(get_db)):
-    return db.query(User).all()
+    return db.query(Users).all()
 
-
+ 
 @router.get("/users/{user_id}", response_model=UserInfo)
 async def get_user(user_id: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.user_id == user_id).first()
+    user = db.query(Users).filter(Users.user_id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -168,4 +168,4 @@ async def get_user(user_id: str, db: Session = Depends(get_db)):
 
 @router.get("/tenants/{tenant_id}/users", response_model=List[UserInfo])
 async def get_tenant_users(tenant_id: str, db: Session = Depends(get_db)):
-    return db.query(User).filter(User.tenant_id == tenant_id).all()
+    return db.query(Users).filter(Users.tenant_id == tenant_id).all()

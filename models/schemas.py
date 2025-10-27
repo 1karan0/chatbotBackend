@@ -47,7 +47,6 @@ class TenantInfo(BaseModel):
     tenant_id: UUID
     tenant_name: str
     created_at: datetime
-    is_active: bool
 
     class Config:
         from_attributes = True

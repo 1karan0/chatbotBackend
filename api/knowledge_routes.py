@@ -7,7 +7,7 @@ import json
 from models.schemas import KnowledgeSourceCreate, KnowledgeSourceInfo, ProcessingStatus
 from auth.dependencies import get_tenant_id, get_current_user
 from database.connection import get_db
-from database.models import User, KnowledgeSource
+from database.models import Users, KnowledgeSources
 from services.web_scraper import web_scraper
 from services.document_processor import document_processor
 from services.retrieval_service_v2 import retrieval_service
@@ -27,7 +27,7 @@ async def add_url_source(
             detail="Invalid URL format"
         )
 
-    source = KnowledgeSource(
+    source = KnowledgeSources(
         tenant_id=tenant_id,
         source_type="url",
         source_url=url,
@@ -111,7 +111,7 @@ async def add_multiple_urls(
             })
             continue
 
-        source = KnowledgeSource(
+        source = KnowledgeSources(
             tenant_id=tenant_id,
             source_type="url",
             source_url=url,
@@ -197,7 +197,7 @@ async def add_text_source(
             detail="Text content cannot be empty"
         )
 
-    source = KnowledgeSource(
+    source = KnowledgeSources(
         tenant_id=tenant_id,
         source_type="text",
         source_content=text,
@@ -278,7 +278,7 @@ async def add_multiple_files(
                 })
                 continue
 
-            source = KnowledgeSource(
+            source = KnowledgeSources(
                 tenant_id=tenant_id,
                 source_type="file",
                 file_name=file.filename,
@@ -364,7 +364,7 @@ async def add_file_source(
                 detail="Could not extract text from file"
             )
 
-        source = KnowledgeSource(
+        source = KnowledgeSources(
             tenant_id=tenant_id,
             source_type="file",
             file_name=file.filename,
@@ -428,9 +428,9 @@ async def list_knowledge_sources(
     db: Session = Depends(get_db)
 ):
     """List all knowledge sources for the current tenant."""
-    sources = db.query(KnowledgeSource).filter(
-        KnowledgeSource.tenant_id == tenant_id
-    ).order_by(KnowledgeSource.created_at.desc()).all()
+    sources = db.query(KnowledgeSources).filter(
+        KnowledgeSources.tenant_id == tenant_id
+    ).order_by(KnowledgeSources.created_at.desc()).all()
 
     return sources
 
@@ -441,9 +441,9 @@ async def delete_knowledge_source(
     db: Session = Depends(get_db)
 ):
     """Delete a knowledge source."""
-    source = db.query(KnowledgeSource).filter(
-        KnowledgeSource.source_id == source_id,
-        KnowledgeSource.tenant_id == tenant_id
+    source = db.query(KnowledgeSources).filter(
+        KnowledgeSources.source_id == source_id,
+        KnowledgeSources.tenant_id == tenant_id
     ).first()
 
     if not source:
@@ -464,9 +464,9 @@ async def rebuild_tenant_index(
 ):
     """Rebuild the search index for the current tenant."""
     try:
-        sources = db.query(KnowledgeSource).filter(
-            KnowledgeSource.tenant_id == tenant_id,
-            KnowledgeSource.status == "completed"
+        sources = db.query(KnowledgeSources).filter(
+            KnowledgeSources.tenant_id == tenant_id,
+            KnowledgeSources.status == "completed"
         ).all()
 
         if not sources:
@@ -530,7 +530,7 @@ async def crawl_sitemap(
         results = []
 
         for url in urls:
-            source = KnowledgeSource(
+            source = KnowledgeSources(
                 tenant_id=tenant_id,
                 source_type="url",
                 source_url=url,
