@@ -23,6 +23,8 @@ class QuestionRequest(BaseModel):
     """Request model for asking questions."""
     question: str = Field(..., description="The question to ask", min_length=1)
     tenant_id: UUID = Field(..., description="Tenant ID for the question")
+    session_id: Optional[str] = Field(None, description="Session ID to group messages in one conversation. Omit or set new_conversation=true when starting a new chat to get a new id.")
+    new_conversation: bool = Field(False, description="If true, start a new conversation: a new session_id is generated and returned; use it for all later messages in this chat.")
 
 
 class SourceImage(BaseModel):
@@ -37,8 +39,51 @@ class QuestionResponse(BaseModel):
     answer: str = Field(..., description="The answer to the question")
     sources: List[str] = Field(..., description="Sources used for the answer")
     tenant_id: UUID = Field(..., description="Tenant ID that provided the answer")
+    session_id: str = Field(..., description="Session ID used for this message. Use this same value for GET /chat/conversation and for the next POST /chat/ask to keep the thread.")
     suggestions: Optional[List[str]] = []
-    images: Optional[List[SourceImage]] = Field(default_factory=list, description="Image URLs from the sources used (e.g. from web pages)") 
+    images: Optional[List[SourceImage]] = Field(default_factory=list, description="Image URLs from the sources used (e.g. from web pages)")
+
+
+# 💬 ---------------- CONVERSATION (for frontend display) ----------------
+class ConversationMessage(BaseModel):
+    """Single message in a conversation (user or bot)."""
+    role: str = Field(..., description="'user' or 'bot'")
+    text: str = Field(..., description="Message content")
+    timestamp: Optional[str] = Field(None, description="ISO timestamp when the message was sent")
+    images: Optional[List[SourceImage]] = Field(default_factory=list, description="Images attached to this message (e.g. bot response images)")
+
+
+class ConversationResponse(BaseModel):
+    """Response model for conversation history (chatbot + user messages)."""
+    conversation_id: Optional[UUID] = Field(None, description="Conversation ID")
+    session_id: str = Field(..., description="Session identifier for this chat")
+    tenant_id: str = Field(..., description="Tenant ID")
+    messages: List[ConversationMessage] = Field(default_factory=list, description="Ordered list of user and bot messages")
+    created_at: Optional[datetime] = Field(None, description="When the conversation was created")
+    updated_at: Optional[datetime] = Field(None, description="When the conversation was last updated")
+
+    class Config:
+        json_encoders = {UUID: lambda v: str(v)}
+
+
+class ConversationListItem(BaseModel):
+    """Summary of one conversation for the list view."""
+    conversation_id: UUID = Field(..., description="Conversation ID")
+    session_id: str = Field(..., description="Session ID; use this for GET /chat/conversation")
+    tenant_id: str = Field(..., description="Tenant ID")
+    messages: List[ConversationMessage] = Field(default_factory=list, description="Ordered list of user and bot messages")
+    preview: Optional[str] = Field(None, description="Short preview of the last message (e.g. first 80 chars)")
+    created_at: Optional[datetime] = Field(None, description="When the conversation was created")
+    updated_at: Optional[datetime] = Field(None, description="When the conversation was last updated")
+
+    class Config:
+        json_encoders = {UUID: lambda v: str(v)}
+
+
+class ConversationListResponse(BaseModel):
+    """Response model for listing all conversations (total conversations)."""
+    conversations: List[ConversationListItem] = Field(default_factory=list, description="All conversations for the tenant, newest first")
+    total: int = Field(0, description="Total number of conversations") 
 
 
 # 🏢 ---------------- TENANT ----------------

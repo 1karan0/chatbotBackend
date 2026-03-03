@@ -182,7 +182,7 @@ Answer:"""
     # --------------------------
     # 🧠 Answer Questions
     # --------------------------
-    def answer_question(self, question: str, tenant_id: str) -> Dict[str, Any]:
+    def answer_question(self, question: str, tenant_id: str, user_asking_for_images: bool = False) -> Dict[str, Any]:
      """Generate answer for a question using tenant-filtered retrieval and dynamic suggestions."""
      if not self.vector_db:
         self.initialize_database()
@@ -218,6 +218,10 @@ Answer:"""
 
          context_text = "\n\n".join([doc.page_content for doc in docs])
          sources = [doc.metadata.get("source", "Unknown") for doc in docs]
+
+         # When user asks for images, tell the model so it doesn't say "I don't have that information"
+         if user_asking_for_images:
+             context_text += "\n\n[Note: The user is asking for images. Relevant images from the knowledge sources are being attached to this response. Acknowledge that you are providing the requested images (e.g. \"Here are the images from the relevant sources\" or \"Here are the images you asked for\") rather than saying you don't have that information.]"
 
         # Generate answer
          final_prompt = self.prompt.format(context=context_text, question=question)
@@ -297,6 +301,37 @@ Answer:"""
     # --------------------------
     # 🖼️ Image relevance (for chat UI)
     # --------------------------
+
+    def user_asks_for_image(self, question: str) -> bool:
+        """
+        Return True only if the user's question indicates they want to see an image/photo.
+        If False, the chat should not include any images in the response.
+        """
+        if not question or not question.strip():
+            return False
+        q = question.strip().lower()
+        # Word-boundary style check for single words
+        for token in ("image", "images", "photo", "photos", "picture", "pictures",
+                      "visual", "diagram", "screenshot", "illustration", "graphic", "chart"):
+            if token in q:
+                return True
+        # Phrase checks (simple substring)
+        if "show me" in q and ("image" in q or "photo" in q or "picture" in q):
+            return True
+        if "show " in q and ("image" in q or "photo" in q or "picture" in q):
+            return True
+        if "send " in q and ("image" in q or "photo" in q or "picture" in q):
+            return True
+        if "display " in q and ("image" in q or "photo" in q or "picture" in q):
+            return True
+        if "see the " in q and ("image" in q or "photo" in q or "picture" in q):
+            return True
+        if "what does" in q and "look like" in q:
+            return True
+        if "how does" in q and "look" in q:
+            return True
+        return False
+
     def _is_junk_image_url(self, url: str) -> bool:
         """True if URL looks like tracking pixel, logo, icon, etc."""
         return bool(JUNK_IMAGE_PATTERNS.search(url))
@@ -320,8 +355,6 @@ Answer:"""
         ]
         if not candidates:
             return []
-        if len(candidates) <= 3:
-            return candidates[:MAX_IMAGES_TO_SHOW]
 
         # 2) Ask LLM which image URLs are relevant to the question/answer
         list_for_prompt = "\n".join(
@@ -353,8 +386,8 @@ Return a JSON array of the selected image URLs only, e.g. ["https://...", "https
             urls_selected = set()
 
         if not urls_selected:
-            # Fallback: return first few non-junk candidates
-            return candidates[:MAX_IMAGES_TO_SHOW]
+            # If we can't confidently select any relevant images, don't send images at all
+            return []
 
         out = [c for c in candidates if c.get("url") in urls_selected]
         return out[:MAX_IMAGES_TO_SHOW]

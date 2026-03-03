@@ -38,6 +38,9 @@ pip install -r requirements.txt
 
 # Download NLTK data
 python3 -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perceptron_tagger')"
+
+# Optional: for React/Next.js and other JS-rendered URL scraping
+playwright install chromium
 ```
 
 ### 2. Configure Environment
@@ -158,6 +161,11 @@ Authorization: Bearer eyJ...
 
 ### Chat
 
+**Session flow (one session_id per conversation; new id for each new chat):**
+1. **New conversation** → Call `GET /chat/session?tenant_id=...` and store `response.session_id`, or send the first message with `"new_conversation": true` (no `session_id`) and store `response.session_id` from the answer. Each call returns a **new unique** session_id.
+2. **Send message** → `POST /chat/ask` with body: `{ "question": "...", "tenant_id": "...", "session_id": "<stored>" }`. Use the **same** stored `session_id` for all messages in that chat.
+3. **Load history** → `GET /chat/conversation?tenant_id=...&session_id=<stored>`.
+
 #### Ask Question
 ```bash
 POST /chat/ask
@@ -165,9 +173,12 @@ Authorization: Bearer eyJ...
 Content-Type: application/json
 
 {
-  "question": "What are your business hours?"
+  "question": "What are your business hours?",
+  "tenant_id": "07fbe519-1367-4926-8837-60c773de9449",
+  "session_id": "f7f1dde7-b57b-4d2d-809e-a2b428e9bb78"
 }
 ```
+Use the same `session_id` for every message in this chat (get it from GET /chat/session when starting a new chat). Omit `session_id` only if you don’t need to load conversation history later.
 
 Response:
 ```json
@@ -175,16 +186,93 @@ Response:
   "answer": "Our business hours are Monday-Friday, 9 AM to 5 PM.",
   "sources": ["https://example.com/contact", "Business Info.txt"],
   "tenant_id": "my_company",
+  "session_id": "f7f1dde7-b57b-4d2d-809e-a2b428e9bb78",
   "suggestions": ["What are your business hours?", "..."],
   "images": [
     { "url": "https://example.com/photo.jpg", "alt": "Office", "title": null }
   ]
 }
 ```
+Use the same `session_id` in the next POST /chat/ask and in GET /chat/conversation to keep the thread.
 
 - **images**: Image URLs from the knowledge sources used for the answer (e.g. scraped from web pages). Only images relevant to the user's question are included; tracking pixels, logos, and icons are filtered out. Use these to display pictures in the chat UI.
 
 **Displaying images in the chat UI:** After each bot message, iterate over `response.images` and render each image, e.g. `<img src={img.url} alt={img.alt} />`. Images are normal URLs; the browser loads them from the source site. You can show them in a row, grid, or lightbox below the answer text.
+
+**Which session_id to use?** You must use the **same** session_id for the whole chat. Get it once, store it, reuse it:
+1. When the user opens a **new chat**, call **GET /chat/session** (below) to get a new `session_id` and store it (e.g. in React state or localStorage).
+2. Send that **stored** `session_id` in the body of **every** `POST /chat/ask` in that chat.
+3. Use that **same** `session_id` in **GET /chat/conversation** to load the message history. If you don’t send `session_id` on `/ask`, the backend generates a new one per request and messages end up in different conversations.
+
+#### Get a new chat session (new session_id per call)
+Call this when the user starts a **new** conversation. Each call returns a **new unique** `session_id`; store it and use it for all `/ask` and `/conversation` calls in that chat. When the user starts another new chat, call this again (or send the first message with `new_conversation: true`) to get a different session_id.
+
+```bash
+GET /chat/session?tenant_id={tenant_id}
+```
+
+Response:
+```json
+{
+  "session_id": "f7f1dde7-b57b-4d2d-809e-a2b428e9bb78",
+  "tenant_id": "07fbe519-1367-4926-8837-60c773de9449"
+}
+```
+Every request returns a **new** session_id so each new conversation gets its own thread.
+
+#### List All Conversations (total conversations)
+Get all conversations for the tenant to show in the frontend (e.g. sidebar list). Use each item's `session_id` with GET /chat/conversation to load that conversation's messages.
+
+```bash
+GET /chat/conversations?tenant_id={tenant_id}
+```
+
+Response:
+```json
+{
+  "conversations": [
+    {
+      "conversation_id": "uuid",
+      "session_id": "f7f1dde7-b57b-4d2d-809e-a2b428e9bb78",
+      "tenant_id": "07fbe519-1367-4926-8837-60c773de9449",
+      "message_count": 6,
+      "preview": "What are your business hours?",
+      "created_at": "2025-03-02T12:00:00.000Z",
+      "updated_at": "2025-03-02T12:05:00.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+Conversations are ordered by `updated_at` (newest first). Use `session_id` when calling GET /chat/conversation to load messages for that chat.
+
+#### Get Conversation History
+Fetch the full conversation (user + bot messages) for a session so you can display it in your frontend (e.g. on page load or when switching chats). Use the **same** `session_id` you got from GET /chat/session and send with POST /chat/ask.
+
+```bash
+GET /chat/conversation?tenant_id={tenant_id}&session_id={session_id}
+```
+
+Query parameters:
+- **tenant_id** (required): Tenant ID for the chatbot.
+- **session_id** (required): The session ID you got from GET /chat/session (or from the first POST /chat/ask response). Must be the same for the whole chat.
+
+Response:
+```json
+{
+  "conversation_id": "uuid-or-null",
+  "session_id": "sess_abc123",
+  "tenant_id": "my_company",
+  "messages": [
+    { "role": "user", "text": "What are your hours?", "timestamp": "2025-03-02T12:00:00.000Z" },
+    { "role": "bot", "text": "Our business hours are...", "timestamp": "2025-03-02T12:00:01.000Z" }
+  ],
+  "created_at": "2025-03-02T12:00:00.000Z",
+  "updated_at": "2025-03-02T12:05:00.000Z"
+}
+```
+
+If no conversation exists for that tenant + session, `messages` is an empty array. Use this endpoint when the user opens the chat to load previous messages, then append new ones from each `POST /chat/ask` response.
 
 #### Get Chat Status
 ```bash
@@ -451,8 +539,7 @@ gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 **3. "Failed to scrape URL"**
 - Check if URL is accessible
 - Some websites block automated scraping
-- For **React/Next.js or SPA sites**: install Playwright and browsers: `pip install playwright && playwright install chromium`. The scraper auto-detects SPAs and uses the browser when needed.
-- You can force browser mode with `force_playwright=true` on `POST /knowledge/sources/url` (or batch/sitemap) for known SPA URLs
+- For **React/Next.js or SPA sites**: use Playwright by setting `force_playwright=true` on `POST /knowledge/sources/url` (or batch/sitemap). Install Playwright and the Chromium browser: `pip install playwright && playwright install chromium`.
 - Try adding the content as text instead if scraping still fails
 
 **4. Authentication errors**
