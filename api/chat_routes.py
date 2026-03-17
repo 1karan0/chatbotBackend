@@ -73,13 +73,44 @@ async def ask_question(
         )
 
     try:
-        # 1 Detect if user is asking for images so the model can acknowledge them in the answer
+        # 1 Find bot using tenant_id (to read config such as behavior mode)
+        bot = db.query(Bots).filter(Bots.tenant_id == str(tenant_id)).first()
+        if not bot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Bot not found for this tenant"
+            )
+
+        # 2 Detect if user is asking for images so the model can acknowledge them in the answer
         user_wants_images = retrieval_service.user_asks_for_image(question_text)
 
-        # 2 Run retrieval and generate answer (pass image hint so model doesn't say "I don't have that information")
-        result = retrieval_service.answer_question(question_text, tenant_id, user_asking_for_images=user_wants_images)
+        # 3 Build chatbot behavior config from bot.config (if present)
+        behavior = None
+        try:
+            cfg = bot.config or {}
+            website_type = cfg.get("websiteType") or cfg.get("website_type")
+            primary_goal = cfg.get("primaryGoal") or cfg.get("primary_goal")
+            tone = cfg.get("tone")
+            extra = cfg.get("extraInstructions") or cfg.get("extra_instructions")
+            if any([website_type, primary_goal, tone, extra]):
+                behavior = {
+                    "website_type": website_type,
+                    "primary_goal": primary_goal,
+                    "tone": tone,
+                    "extra_instructions": extra,
+                }
+        except Exception:
+            behavior = None
 
-        # 3 Include images only when the user explicitly asks for them (e.g. "show image", "photo")
+        # 4 Run retrieval and generate answer (pass image hint + behavior mode)
+        result = retrieval_service.answer_question(
+            question_text,
+            tenant_id,
+            user_asking_for_images=user_wants_images,
+            behavior=behavior,
+        )
+
+        # 5 Include images only when the user explicitly asks for them (e.g. "show image", "photo")
         images: list[SourceImage] = []
         if user_wants_images and result.get("sources"):
             raw_images: list[dict] = []
@@ -116,15 +147,7 @@ async def ask_question(
                 if "don't have" in answer_lower or "do not have" in answer_lower or "don't have that information" in answer_lower:
                     result = {**result, "answer": "Here are the images from the relevant sources."}
 
-        # 4 Find bot using tenant_id
-        bot = db.query(Bots).filter(Bots.tenant_id == str(tenant_id)).first()
-        if not bot:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Bot not found for this tenant"
-            )
-
-        # 5 Find or create conversation
+        # 6 Find or create conversation
         conversation = (
             db.query(Conversations)
             .filter(Conversations.sessionId == session_id, Conversations.botId == bot.id)
@@ -144,7 +167,7 @@ async def ask_question(
             db.add(conversation)
             bot.totalConversations += 1
 
-        # 6 Append user + bot messages (assign new list so SQLAlchemy persists JSONB changes)
+        # 7 Append user + bot messages (assign new list so SQLAlchemy persists JSONB changes)
         msg_list = list(conversation.messages) if conversation.messages else []
         msg_list.append({
             "role": "user",
@@ -164,12 +187,15 @@ async def ask_question(
         bot.totalMessages += 2
         attributes.flag_modified(conversation, "messages")
 
-        # 7 Commit all changes
+        # 8 Commit all changes
         db.add(conversation)
         db.add(bot)
         db.commit()
 
-        # 8 Return response including images and session_id so frontend can load conversation
+        # 9 Optional hint when question is very long (better UX: suggest shortening)
+        question_hint = retrieval_service.get_question_length_hint(question_text)
+
+        # 10 Return response including images and session_id so frontend can load conversation
         return QuestionResponse(
             answer=result["answer"],
             sources=result["sources"],
@@ -177,6 +203,7 @@ async def ask_question(
             session_id=session_id,
             suggestions=result["suggestions"],
             images=images,
+            question_hint=question_hint,
         )
     except Exception as e:
         db.rollback()

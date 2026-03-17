@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     secret_key: str = os.getenv("SECRET_KEY", "fallback-secret-key-change-in-production")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     algorithm: str = os.getenv("ALGORITHM", "HS256")
+    admin_username: str = os.getenv("ADMIN_USERNAME", "")
+    admin_password: str = os.getenv("ADMIN_PASSWORD", "")
     
     # Database Settings
     database_url: str = os.getenv("DATABASE_URL", "postgresql://chatbot_eni9_user:aohKgZKRws7r3X4TmLyJsPtMaY8cTdoE@dpg-d3vftpur433s73crgvog-a.singapore-postgres.render.com/chatbot_eni9")

@@ -42,6 +42,7 @@ class QuestionResponse(BaseModel):
     session_id: str = Field(..., description="Session ID used for this message. Use this same value for GET /chat/conversation and for the next POST /chat/ask to keep the thread.")
     suggestions: Optional[List[str]] = []
     images: Optional[List[SourceImage]] = Field(default_factory=list, description="Image URLs from the sources used (e.g. from web pages)")
+    question_hint: Optional[str] = Field(None, description="Optional friendly hint when the question was very long, suggesting the user shorten it for better results")
 
 
 # 💬 ---------------- CONVERSATION (for frontend display) ----------------

@@ -1,14 +1,16 @@
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, HTTPBasic, HTTPBasicCredentials
+import secrets
 from sqlalchemy.orm import Session
 from typing import Dict, Any
 
 from .jwt_handler import jwt_handler
 from database.connection import get_db
 from database.models import Users, Tenants
+from config.settings import settings
 
-# OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+swagger_basic_scheme = HTTPBasic()
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -60,3 +62,26 @@ async def get_current_tenant(
 async def get_tenant_id(current_user: Users = Depends(get_current_user)) -> str:
     """Get the current authenticated user's tenant ID."""
     return current_user.tenant_id
+
+
+async def verify_swagger_admin(
+    credentials: HTTPBasicCredentials = Depends(swagger_basic_scheme),
+) -> None:
+    """
+    Verify admin credentials for accessing Swagger / OpenAPI docs.
+    Uses ADMIN_USERNAME and ADMIN_PASSWORD from settings.
+    """
+    expected_username = settings.admin_username or ""
+    expected_password = settings.admin_password or ""
+
+    correct_username = secrets.compare_digest(credentials.username, expected_username)
+    correct_password = secrets.compare_digest(credentials.password, expected_password)
+
+    if not (expected_username and expected_password and correct_username and correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authorized to access API documentation",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return None

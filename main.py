@@ -2,9 +2,13 @@ import os
 os.environ["LANGCHAIN_TELEMETRY"] = "false"
 import sys
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from fastapi.openapi.docs import (
+    get_swagger_ui_html,
+    get_redoc_html,
+)
 from contextlib import asynccontextmanager
 
 # Fix SQLite for ChromaDB compatibility
@@ -20,6 +24,7 @@ from services.retrieval_service_v2 import retrieval_service
 from api.auth_routes import router as auth_router
 from api.chat_routes import router as chat_router
 from api.knowledge_routes import router as knowledge_router
+from auth.dependencies import verify_swagger_admin
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,8 +60,9 @@ app = FastAPI(
     description="A multi-tenant chatbot using RAG (Retrieval-Augmented Generation) with JWT authentication",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url=None,   # disable default docs to secure manually
+    redoc_url=None,  # disable default redoc to secure manually
+    openapi_url=None,  # disable default OpenAPI schema URL to secure manually
 )
 
 # Add CORS middleware
@@ -77,6 +83,29 @@ app.include_router(knowledge_router)
 async def root():
     """Redirect root to docs."""
     return RedirectResponse(url="/docs")
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def get_openapi_schema():
+    return app.openapi()
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_docs(_: None = Depends(verify_swagger_admin)):
+    """Protected Swagger UI."""
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title=app.title + " - Docs",
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_docs(_: None = Depends(verify_swagger_admin)):
+    """Protected ReDoc UI."""
+    return get_redoc_html(
+        openapi_url="/openapi.json",
+        title=app.title + " - ReDoc",
+    )
 
 @app.get("/health")
 async def health_check():

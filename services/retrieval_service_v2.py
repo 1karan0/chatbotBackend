@@ -18,6 +18,9 @@ JUNK_IMAGE_PATTERNS = re.compile(
 )
 MAX_IMAGES_TO_SHOW = 8  # cap so the UI stays readable
 
+# Recommended max question length for best results; longer questions get a friendly hint
+MAX_RECOMMENDED_QUESTION_LENGTH = 400
+
 # ✅ Fix SQLite for ChromaDB compatibility
 try:
     __import__('pysqlite3')
@@ -26,28 +29,32 @@ except ImportError:
     pass
 
 
+# Max length for suggested questions (chars) so they stay easy to read and click
+MAX_SUGGESTION_QUESTION_LENGTH = 80
+
 # ===============================
 # 🚀 Suggestion Question Generator
 # ===============================
 class SuggestionQuestionGenerator:
-    """Generates relevant chatbot starter questions from content."""
+    """Generates short, human-friendly chatbot suggestion questions from content."""
 
     def __init__(self, llm_model: str):
         self.llm = ChatOpenAI(model=llm_model, temperature=0.7)
         self.prompt_template = ChatPromptTemplate.from_template("""
-You are an assistant that creates engaging chatbot starter questions.
+You are an assistant that creates short, clickable suggestion questions for a chatbot.
 
-Given the following knowledge content, generate 3 to 5 short, natural, and diverse questions that a user might ask to explore this content.
+Given the following knowledge content, generate 3 to 5 questions a user might ask.
 
-The questions should:
-- Be conversational, not robotic
-- Be relevant to the content
-- Cover different types (facts, how-to, summaries, etc.)
+STRICT RULES:
+- Each question MUST be short: one brief sentence, under 10 words when possible. Think "search bar" or "quick click", not essays.
+- Use simple, everyday language. Good: "What services do you offer?" Bad: "Could you give me a brief overview of your recent projects and the technologies you've used?"
+- Be conversational and natural, as if a real person asked in chat.
+- One topic per question. Cover different angles (services, process, comparison, etc.).
 
 Context:
 {context}
 
-Questions:
+Write only the questions, one per line. No numbering or bullets. Keep each line short.
 """)
 
     def generate(self, docs: List[Document]) -> List[str]:
@@ -69,7 +76,23 @@ Questions:
             for q in response.content.splitlines()
             if q.strip()
         ]
+        # Enforce max length: shorten any suggestion that's still too long for humans
+        questions = self._shorten_suggestions(questions)
         return questions[:5]
+
+    def _shorten_suggestions(self, questions: List[str]) -> List[str]:
+        """Keep suggestions within MAX_SUGGESTION_QUESTION_LENGTH; shorten if needed."""
+        out = []
+        for q in questions:
+            if len(q) <= MAX_SUGGESTION_QUESTION_LENGTH:
+                out.append(q)
+                continue
+            # Trim to last full word before the limit and add ...
+            trimmed = q[: MAX_SUGGESTION_QUESTION_LENGTH - 3].rsplit(maxsplit=1)
+            short = (trimmed[0] + "…") if trimmed else q[: MAX_SUGGESTION_QUESTION_LENGTH - 3] + "…"
+            if short.strip():
+                out.append(short)
+        return out
 
 
 # ===============================
@@ -90,8 +113,13 @@ class RetrievalServiceV2:
             separators=["\n\n", "\n", ". ", " ", ""]
         )
 
-        # prompt for answering user queries
-        self.prompt_template = """You are a helpful AI assistant. Answer the user's question using only the provided context.
+        # Prompt for answering user queries – behavior is injected dynamically
+        self.prompt_template = """You are a helpful AI assistant.
+
+Chatbot behavior mode:
+{behavior}
+
+Answer the user's question using only the provided context.
 If the answer is not in the context, politely say you don't have that information.
 
 Context:
@@ -108,6 +136,41 @@ Answer:"""
         # Temporary in-memory store for suggestions
         # In production, replace this with a database or Redis
         self.suggestion_cache: Dict[str, List[str]] = {}
+
+    # --------------------------
+    # 🎛️ Chatbot Behavior Modes
+    # --------------------------
+    def _build_behavior_instructions(self, behavior: Dict[str, Any] | None) -> str:
+        """
+        Build a short, focused behavior block based on website/chatbot config.
+
+        Expected behavior dict keys (all optional):
+        - website_type: e.g. "service_business", "ecommerce"
+        - primary_goal: e.g. "Sales + Support"
+        - tone: e.g. "Friendly, professional, slightly persuasive"
+        - extra_instructions: long free‑text instructions
+        """
+        if not behavior:
+            return (
+                "Website type: General website\n"
+                "Primary goal: Answer questions based on the site's content.\n"
+                "Tone: Friendly and neutral.\n"
+            )
+
+        website_type = (behavior.get("website_type") or "General website").strip()
+        primary_goal = (behavior.get("primary_goal") or "Answer questions based on the site's content.").strip()
+        tone = (behavior.get("tone") or "Friendly and professional.").strip()
+        extra = (behavior.get("extra_instructions") or "").strip()
+
+        lines = [
+            f"Website type: {website_type}",
+            f"Primary goal: {primary_goal}",
+            f"Tone: {tone}",
+        ]
+        if extra:
+            lines.append("Additional instructions:")
+            lines.append(extra)
+        return "\n".join(lines)
 
     # --------------------------
     # 🧱 Initialize / Load DB
@@ -182,79 +245,97 @@ Answer:"""
     # --------------------------
     # 🧠 Answer Questions
     # --------------------------
-    def answer_question(self, question: str, tenant_id: str, user_asking_for_images: bool = False) -> Dict[str, Any]:
-     """Generate answer for a question using tenant-filtered retrieval and dynamic suggestions."""
-     if not self.vector_db:
-        self.initialize_database()
+    def answer_question(
+        self,
+        question: str,
+        tenant_id: str,
+        user_asking_for_images: bool = False,
+        behavior: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        """Generate answer for a question using tenant-filtered retrieval and dynamic suggestions."""
+        if not self.vector_db:
+            self.initialize_database()
 
-     if not self.vector_db:
-        return {
-            "answer": "Error: Knowledge base not available. Please add some content first.",
-            "sources": [],
-            "tenant_id": str(tenant_id),
-            "suggestions": self.get_tenant_suggestions(str(tenant_id))
-        }
-
-     try:
-         tenant_id_str = str(tenant_id)
-         tenant_filter = {"tenant_id": tenant_id_str}
-
-         retriever = self.vector_db.as_retriever(
-            search_kwargs={
-                "k": settings.retrieval_k,
-                "filter": tenant_filter
-            }
-        )
-
-         docs = retriever.invoke(question)
-         if not docs:
-            suggestions = self.get_tenant_suggestions(tenant_id_str)
+        if not self.vector_db:
             return {
-                "answer": "I don't have any information to answer that question. Please add relevant content to the knowledge base.",
+                "answer": "Error: Knowledge base not available. Please add some content first.",
                 "sources": [],
-                "tenant_id": tenant_id_str,
-                "suggestions": suggestions
+                "tenant_id": str(tenant_id),
+                "suggestions": self.get_tenant_suggestions(str(tenant_id)),
             }
 
-         context_text = "\n\n".join([doc.page_content for doc in docs])
-         sources = [doc.metadata.get("source", "Unknown") for doc in docs]
+        try:
+            tenant_id_str = str(tenant_id)
+            tenant_filter = {"tenant_id": tenant_id_str}
 
-         # When user asks for images, tell the model so it doesn't say "I don't have that information"
-         if user_asking_for_images:
-             context_text += "\n\n[Note: The user is asking for images. Relevant images from the knowledge sources are being attached to this response. Acknowledge that you are providing the requested images (e.g. \"Here are the images from the relevant sources\" or \"Here are the images you asked for\") rather than saying you don't have that information.]"
+            retriever = self.vector_db.as_retriever(
+                search_kwargs={
+                    "k": settings.retrieval_k,
+                    "filter": tenant_filter,
+                }
+            )
 
-        # Generate answer
-         final_prompt = self.prompt.format(context=context_text, question=question)
-         response = self.llm.invoke(final_prompt)
+            docs = retriever.invoke(question)
+            if not docs:
+                suggestions = self.get_tenant_suggestions(tenant_id_str)
+                return {
+                    "answer": "I don't have any information to answer that question. Please add relevant content to the knowledge base.",
+                    "sources": [],
+                    "tenant_id": tenant_id_str,
+                    "suggestions": suggestions,
+                }
 
-        # Generate suggestions from docs
-         suggestions = self.suggestion_generator.generate(docs)
+            context_text = "\n\n".join([doc.page_content for doc in docs])
+            sources = [doc.metadata.get("source", "Unknown") for doc in docs]
 
-        # Remove the user's question if it matches a suggestion
-         suggestions = [s for s in suggestions if question.lower() not in s.lower()]
+            # When user asks for images, tell the model so it doesn't say "I don't have that information"
+            if user_asking_for_images:
+                context_text += (
+                    "\n\n[Note: The user is asking for images. Relevant images from the knowledge sources are "
+                    'being attached to this response. Acknowledge that you are providing the requested images '
+                    '(e.g. "Here are the images from the relevant sources" or "Here are the images you asked for") '
+                    "rather than saying you don't have that information.]"
+                )
 
-        # Regenerate if too few suggestions
-         if len(suggestions) < 3:
+            # Build behavior block from admin-selected website type / tone
+            behavior_text = self._build_behavior_instructions(behavior)
+
+            # Generate answer
+            final_prompt = self.prompt.format(
+                behavior=behavior_text,
+                context=context_text,
+                question=question,
+            )
+            response = self.llm.invoke(final_prompt)
+
+            # Generate suggestions from docs
             suggestions = self.suggestion_generator.generate(docs)
 
-        # Update cache for dynamic refresh next time
-         self.suggestion_cache[tenant_id_str] = suggestions
+            # Remove the user's question if it matches a suggestion
+            suggestions = [s for s in suggestions if question.lower() not in s.lower()]
 
-         return {
-            "answer": response.content.strip(),
-            "sources": list(set(sources)),
-            "tenant_id": tenant_id_str,
-            "suggestions": suggestions
-        }
+            # Regenerate if too few suggestions
+            if len(suggestions) < 3:
+                suggestions = self.suggestion_generator.generate(docs)
 
-     except Exception as e:
-        print(f"❌ Error answering question: {e}")
-        return {
-            "answer": f"Error processing question: {str(e)}",
-            "sources": [],
-            "tenant_id": str(tenant_id),
-            "suggestions": self.get_tenant_suggestions(str(tenant_id))
-        }
+            # Update cache for dynamic refresh next time
+            self.suggestion_cache[tenant_id_str] = suggestions
+
+            return {
+                "answer": response.content.strip(),
+                "sources": list(set(sources)),
+                "tenant_id": tenant_id_str,
+                "suggestions": suggestions,
+            }
+
+        except Exception as e:
+            print(f"❌ Error answering question: {e}")
+            return {
+                "answer": f"Error processing question: {str(e)}",
+                "sources": [],
+                "tenant_id": str(tenant_id),
+                "suggestions": self.get_tenant_suggestions(str(tenant_id)),
+            }
 
     # --------------------------
     # 📊 Document Count
@@ -297,6 +378,21 @@ Answer:"""
             "Tell me something interesting.",
             "How can I use this chatbot?"
         ])
+
+    # --------------------------
+    # 📏 Long-question hint (better UX for humans)
+    # --------------------------
+    def get_question_length_hint(self, question: str) -> str | None:
+        """
+        If the question is very long, return a short, friendly hint suggesting the user
+        shorten it for better results. Otherwise return None.
+        """
+        if not question or len(question.strip()) <= MAX_RECOMMENDED_QUESTION_LENGTH:
+            return None
+        return (
+            "Your question is quite long. For clearer answers, try asking one thing at a time "
+            "in a short sentence."
+        )
 
     # --------------------------
     # 🖼️ Image relevance (for chat UI)
