@@ -1,6 +1,7 @@
 import sys
 import re
 import json
+import hashlib
 from typing import List, Dict, Any
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import Chroma
@@ -21,6 +22,13 @@ MAX_IMAGES_TO_SHOW = 8  # cap so the UI stays readable
 # Recommended max question length for best results; longer questions get a friendly hint
 MAX_RECOMMENDED_QUESTION_LENGTH = 400
 
+# Short openers like "hi" — not answerable from KB but should not get "I don't have that information"
+_SIMPLE_GREETING_RE = re.compile(
+    r"^(hi|hello|hey|hiya|howdy|yo|sup|good\s+(morning|afternoon|evening|day)|greetings?|namaste)"
+    r"[\s!?.,]*$",
+    re.I,
+)
+
 # ✅ Fix SQLite for ChromaDB compatibility
 try:
     __import__('pysqlite3')
@@ -31,6 +39,10 @@ except ImportError:
 
 # Max length for suggested questions (chars) so they stay easy to read and click
 MAX_SUGGESTION_QUESTION_LENGTH = 80
+# Chunks / chars used to build suggestion + verification context (must stay grounded in KB)
+SUGGESTION_POOL_MAX_DOCS = 35
+SUGGESTION_CONTEXT_CHARS_PER_CHUNK = 700
+
 
 # ===============================
 # 🚀 Suggestion Question Generator
@@ -39,46 +51,47 @@ class SuggestionQuestionGenerator:
     """Generates short, human-friendly chatbot suggestion questions from content."""
 
     def __init__(self, llm_model: str):
-        self.llm = ChatOpenAI(model=llm_model, temperature=0.7)
+        # Low temperature: avoid hypothetical questions not present in the knowledge text
+        self.llm = ChatOpenAI(model=llm_model, temperature=0.15)
         self.prompt_template = ChatPromptTemplate.from_template("""
-You are an assistant that creates short, clickable suggestion questions for a chatbot.
+You write short follow-up questions for a chatbot. The chatbot may ONLY use the KNOWLEDGE TEXT below — no other information.
 
-Given the following knowledge content, generate 3 to 5 questions a user might ask.
-
-STRICT RULES:
-- Each question MUST be short: one brief sentence, under 10 words when possible. Think "search bar" or "quick click", not essays.
-- Use simple, everyday language. Good: "What services do you offer?" Bad: "Could you give me a brief overview of your recent projects and the technologies you've used?"
-- Be conversational and natural, as if a real person asked in chat.
-- One topic per question. Cover different angles (services, process, comparison, etc.).
-
-Context:
+KNOWLEDGE TEXT:
 {context}
 
-Write only the questions, one per line. No numbering or bullets. Keep each line short.
+Generate 4 to 6 candidate questions. Each question MUST satisfy ALL of these:
+- The full answer must be contained in the KNOWLEDGE TEXT above (facts, steps, lists, contact info, etc.). Do not ask about anything not clearly there.
+- Do not ask about other companies, generic industry advice, or "best practices" unless the text explicitly discusses them.
+- Do not ask meta questions like "What can you do?" or "How do I use this chatbot?" unless the text explicitly describes the chatbot.
+- One topic per question. Short and clickable: under 10 words when possible, one line each.
+
+Write only the questions, one per line. No numbering, bullets, or quotes.
 """)
 
     def generate(self, docs: List[Document]) -> List[str]:
         if not docs:
-            return [
-                "What can you do?",
-                "Tell me something interesting.",
-                "How can I use this chatbot?",
-            ]
+            return []
 
-        # Limit context length for prompt
-        context_text = "\n\n".join([doc.page_content[:800] for doc in docs[:5]])
+        context_text = "\n\n".join(
+            (doc.page_content or "")[:SUGGESTION_CONTEXT_CHARS_PER_CHUNK].strip()
+            for doc in docs
+        )
+        # Hard cap so the model sees a bounded slice of the KB
+        if len(context_text) > 28000:
+            context_text = context_text[:28000] + "\n…"
+
         final_prompt = self.prompt_template.format(context=context_text)
         response = self.llm.invoke(final_prompt)
 
         # Clean up lines into questions
         questions = [
             q.strip(" -•1234567890.").strip()
-            for q in response.content.splitlines()
+            for q in (response.content or "").splitlines()
             if q.strip()
         ]
         # Enforce max length: shorten any suggestion that's still too long for humans
         questions = self._shorten_suggestions(questions)
-        return questions[:5]
+        return questions[:6]
 
     def _shorten_suggestions(self, questions: List[str]) -> List[str]:
         """Keep suggestions within MAX_SUGGESTION_QUESTION_LENGTH; shorten if needed."""
@@ -119,8 +132,15 @@ class RetrievalServiceV2:
 Chatbot behavior mode:
 {behavior}
 
-Answer the user's question using only the provided context.
-If the answer is not in the context, politely say you don't have that information.
+Answer using ONLY the numbered excerpts below. Each excerpt may be from a different page or document (source name is shown).
+
+Rules:
+- Give a direct, complete answer. Use a short bullet list when the user asks for multiple items, steps, or options.
+- Prefer concrete details from the excerpts (names, numbers, dates, URLs) over vague summaries.
+- If excerpts only partially answer the question, state what is known from them and what is not covered.
+- If nothing in the excerpts answers a factual question, say clearly that you don't have that information. Do not invent facts or use outside knowledge.
+- Simple greetings (hi, hello, good morning, etc.) never require facts from the excerpts: reply briefly and warmly in the configured tone. Do not refuse or say you lack information "about" their greeting.
+- For links and emails in your answer, use Markdown only: [visible text](https://example.com/path) or [email us](mailto:name@example.com). Do not put a closing parenthesis or period inside the URL; put punctuation after the final `)` of the link.
 
 Context:
 {context}
@@ -171,6 +191,188 @@ Answer:"""
             lines.append("Additional instructions:")
             lines.append(extra)
         return "\n".join(lines)
+
+    @staticmethod
+    def _is_simple_greeting(question: str) -> bool:
+        q = (question or "").strip()
+        if not q or len(q) > 72:
+            return False
+        if _SIMPLE_GREETING_RE.match(q):
+            return True
+        words = re.sub(r"[^\w\s]", " ", q.lower()).split()
+        if not words or len(words) > 5:
+            return False
+        allowed = {
+            "hi", "hello", "hey", "hiya", "howdy", "yo", "sup", "thanks", "thank", "you",
+            "morning", "afternoon", "evening", "good", "day", "there", "dear",
+        }
+        return all(w in allowed for w in words)
+
+    def _tenant_metadata_filter(self, tenant_id_str: str) -> Dict[str, Any]:
+        """Chroma filter: this tenant's chunks plus optional shared `tenant_all` index."""
+        return {
+            "$or": [
+                {"tenant_id": tenant_id_str},
+                {"tenant_id": "tenant_all"},
+            ]
+        }
+
+    @staticmethod
+    def _dedupe_documents(docs: List[Document]) -> List[Document]:
+        """Drop near-duplicate chunks so the model gets distinct evidence."""
+        seen: set[str] = set()
+        out: List[Document] = []
+        for d in docs:
+            key = hashlib.sha256(d.page_content.strip().encode("utf-8", errors="ignore")).hexdigest()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(d)
+        return out
+
+    @staticmethod
+    def _sample_docs_evenly(docs: List[Document], max_docs: int) -> List[Document]:
+        """Spread samples across the list so prompts are not biased to the first chunks only."""
+        if max_docs <= 0 or not docs:
+            return []
+        if len(docs) <= max_docs:
+            return docs
+        step = max(1, len(docs) // max_docs)
+        return docs[::step][:max_docs]
+
+    def _docs_for_suggestion_generation(
+        self, tenant_id_str: str, retrieved_docs: List[Document]
+    ) -> List[Document]:
+        """
+        Merge chunks from the current answer retrieval with a spread sample of all tenant
+        chunks so suggested questions match what is actually in the knowledge base.
+        """
+        merged: List[Document] = list(retrieved_docs)
+        try:
+            batch = self.vector_db.get(where={"tenant_id": tenant_id_str})
+            if batch and batch.get("documents"):
+                metas = batch.get("metadatas") or [{}] * len(batch["documents"])
+                for d, m in zip(batch["documents"], metas):
+                    merged.append(
+                        Document(
+                            page_content=d or "",
+                            metadata=m if isinstance(m, dict) else {},
+                        )
+                    )
+        except Exception as e:
+            print(f"Warning: tenant chunk sample for suggestions failed: {e}")
+        merged = self._dedupe_documents(merged)
+        return self._sample_docs_evenly(merged, SUGGESTION_POOL_MAX_DOCS)
+
+    def _keep_answerable_suggestions(
+        self, questions: List[str], knowledge_docs: List[Document]
+    ) -> List[str]:
+        """
+        Drop any suggestion that cannot be answered strictly from the given knowledge chunks.
+        """
+        questions = [q.strip() for q in questions if q and str(q).strip()]
+        if not questions or not knowledge_docs:
+            return []
+
+        picked = self._sample_docs_evenly(knowledge_docs, 18)
+        parts: List[str] = []
+        total = 0
+        for d in picked:
+            piece = (d.page_content or "")[:SUGGESTION_CONTEXT_CHARS_PER_CHUNK].strip()
+            if not piece:
+                continue
+            if total + len(piece) > 11000:
+                break
+            parts.append(piece)
+            total += len(piece)
+        ctx = "\n---\n".join(parts)
+        if not ctx.strip():
+            return []
+
+        qlist = "\n".join(f"{i}. {q}" for i, q in enumerate(questions, start=1))
+        prompt = f"""The chatbot may ONLY use KNOWLEDGE below. No outside facts.
+
+KNOWLEDGE:
+{ctx}
+
+CANDIDATE QUESTIONS (numbered):
+{qlist}
+
+Return JSON only with this exact shape: {{"keep":[1,2]}}
+Include only the numbers of questions whose answers are fully supported by the KNOWLEDGE (explicitly stated or clear paraphrase). If the knowledge only partially applies, exclude that question. If none qualify, return {{"keep":[]}}."""
+
+        try:
+            response = self.llm.invoke(prompt)
+            text = (response.content or "").strip()
+            if "```" in text:
+                text = re.sub(r"^.*?```(?:json)?\s*", "", text, flags=re.DOTALL)
+                text = re.sub(r"\s*```.*$", "", text, flags=re.DOTALL)
+            parsed = json.loads(text)
+            idxs = parsed.get("keep") if isinstance(parsed, dict) else None
+            if not isinstance(idxs, list):
+                return []
+            out: List[str] = []
+            for i in idxs:
+                if isinstance(i, int) and 1 <= i <= len(questions):
+                    out.append(questions[i - 1])
+                elif isinstance(i, str) and i.isdigit():
+                    j = int(i)
+                    if 1 <= j <= len(questions):
+                        out.append(questions[j - 1])
+            # Dedupe while preserving order
+            seen_q: set[str] = set()
+            final = []
+            for q in out:
+                k = q.lower()
+                if k in seen_q:
+                    continue
+                seen_q.add(k)
+                final.append(q)
+            return final[:5]
+        except Exception as e:
+            print(f"Suggestion verification failed (dropping suggestions): {e}")
+            return []
+
+    def _format_context_for_prompt(self, docs: List[Document]) -> str:
+        """Numbered excerpts with source labels for clearer grounding."""
+        max_c = min(settings.context_max_chunks, len(docs))
+        per_chunk = settings.context_max_chars_per_chunk
+        blocks = []
+        for i, doc in enumerate(docs[:max_c], start=1):
+            src = doc.metadata.get("source") or "unknown source"
+            body = doc.page_content.strip()
+            if len(body) > per_chunk:
+                body = body[: per_chunk - 1].rstrip() + "…"
+            blocks.append(f"--- Excerpt {i} (Source: {src}) ---\n{body}")
+        return "\n\n".join(blocks)
+
+    def _retrieve_for_tenant(self, question: str, tenant_id_str: str) -> List[Document]:
+        """MMR retrieval over tenant + shared docs for better coverage than flat top-k."""
+        if not self.vector_db:
+            return []
+        filt = self._tenant_metadata_filter(tenant_id_str)
+        fetch_k = max(settings.retrieval_k, settings.retrieval_fetch_k)
+        try:
+            retriever = self.vector_db.as_retriever(
+                search_type="mmr",
+                search_kwargs={
+                    "k": settings.retrieval_k,
+                    "fetch_k": fetch_k,
+                    "lambda_mult": settings.mmr_lambda,
+                    "filter": filt,
+                },
+            )
+            docs = retriever.invoke(question)
+        except Exception as e:
+            print(f"MMR retrieval failed, using similarity search: {e}")
+            retriever = self.vector_db.as_retriever(
+                search_kwargs={"k": settings.retrieval_k, "filter": filt},
+            )
+            docs = retriever.invoke(question)
+        docs = self._dedupe_documents(docs)
+        # Post-filter in case metadata ever mismatches
+        allowed = {tenant_id_str, "tenant_all"}
+        return [d for d in docs if (d.metadata or {}).get("tenant_id") in allowed]
 
     # --------------------------
     # 🧱 Initialize / Load DB
@@ -266,18 +468,29 @@ Answer:"""
 
         try:
             tenant_id_str = str(tenant_id)
-            tenant_filter = {"tenant_id": tenant_id_str}
 
-            retriever = self.vector_db.as_retriever(
-                search_kwargs={
-                    "k": settings.retrieval_k,
-                    "filter": tenant_filter,
-                }
-            )
-
-            docs = retriever.invoke(question)
+            docs = self._retrieve_for_tenant(question, tenant_id_str)
             if not docs:
                 suggestions = self.get_tenant_suggestions(tenant_id_str)
+                if self._is_simple_greeting(question):
+                    n_chunks = self.get_tenant_document_count(tenant_id_str)
+                    if n_chunks == 0:
+                        answer = (
+                            "Hello! There are no knowledge sources loaded for this assistant yet, "
+                            "so I can't answer detailed questions. Once your team adds website pages or documents, "
+                            "I'll be able to help from that content."
+                        )
+                    else:
+                        answer = (
+                            "Hello! I can help with questions about our services, contact details, and other topics "
+                            "from the information we have on file. What would you like to know?"
+                        )
+                    return {
+                        "answer": answer,
+                        "sources": [],
+                        "tenant_id": tenant_id_str,
+                        "suggestions": suggestions,
+                    }
                 return {
                     "answer": "I don't have any information to answer that question. Please add relevant content to the knowledge base.",
                     "sources": [],
@@ -285,7 +498,13 @@ Answer:"""
                     "suggestions": suggestions,
                 }
 
-            context_text = "\n\n".join([doc.page_content for doc in docs])
+            context_text = self._format_context_for_prompt(docs)
+            if self._is_simple_greeting(question):
+                context_text = (
+                    "[Note: The user's message is a short greeting, not a factual question. "
+                    "Reply with a brief friendly greeting; do not say you lack information about their hello. "
+                    "You may invite them to ask a specific question.]\n\n"
+                ) + context_text
             sources = [doc.metadata.get("source", "Unknown") for doc in docs]
 
             # When user asks for images, tell the model so it doesn't say "I don't have that information"
@@ -308,15 +527,11 @@ Answer:"""
             )
             response = self.llm.invoke(final_prompt)
 
-            # Generate suggestions from docs
-            suggestions = self.suggestion_generator.generate(docs)
-
-            # Remove the user's question if it matches a suggestion
+            # Suggestions: broad KB sample + strict generation + verifier (no unanswerable clicks)
+            knowledge_for_suggestions = self._docs_for_suggestion_generation(tenant_id_str, docs)
+            raw_suggestions = self.suggestion_generator.generate(knowledge_for_suggestions)
+            suggestions = self._keep_answerable_suggestions(raw_suggestions, knowledge_for_suggestions)
             suggestions = [s for s in suggestions if question.lower() not in s.lower()]
-
-            # Regenerate if too few suggestions
-            if len(suggestions) < 3:
-                suggestions = self.suggestion_generator.generate(docs)
 
             # Update cache for dynamic refresh next time
             self.suggestion_cache[tenant_id_str] = suggestions
@@ -361,23 +576,26 @@ Answer:"""
         try:
             tenant_docs = self.vector_db.get(where={"tenant_id": tenant_id})
             if tenant_docs and tenant_docs['documents']:
+                metas = tenant_docs.get("metadatas") or [{}] * len(tenant_docs["documents"])
                 docs = [
-                    Document(page_content=d, metadata=m)
-                    for d, m in zip(tenant_docs['documents'], tenant_docs['metadatas'])
+                    Document(
+                        page_content=d or "",
+                        metadata=m if isinstance(m, dict) else {},
+                    )
+                    for d, m in zip(tenant_docs["documents"], metas)
                 ]
-                suggestions = self.suggestion_generator.generate(docs)
-                self.suggestion_cache[tenant_id] = suggestions
-                print(f"✨ Generated {len(suggestions)} suggestions for tenant {tenant_id}")
+                docs = self._dedupe_documents(docs)
+                sampled = self._sample_docs_evenly(docs, SUGGESTION_POOL_MAX_DOCS)
+                raw = self.suggestion_generator.generate(sampled)
+                filtered = self._keep_answerable_suggestions(raw, sampled)
+                self.suggestion_cache[tenant_id] = filtered[:5]
+                print(f"✨ Generated {len(filtered)} verified suggestions for tenant {tenant_id}")
         except Exception as e:
             print(f"❌ Error generating suggestions: {e}")
 
     def get_tenant_suggestions(self, tenant_id: str) -> List[str]:
         """Retrieve stored suggestion questions for a tenant."""
-        return self.suggestion_cache.get(str(tenant_id), [
-            "What can you do?",
-            "Tell me something interesting.",
-            "How can I use this chatbot?"
-        ])
+        return self.suggestion_cache.get(str(tenant_id), [])
 
     # --------------------------
     # 📏 Long-question hint (better UX for humans)

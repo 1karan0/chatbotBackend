@@ -34,7 +34,15 @@ class Settings(BaseSettings):
     dense_chunk_overlap: int = 100
     sparse_chunk_size: int = 1600
     sparse_chunk_overlap: int = 200
-    retrieval_k: int = 6
+    retrieval_k: int = 8
+    # MMR: retrieve this many candidates first, then diversify down to retrieval_k
+    retrieval_fetch_k: int = 32
+    # MMR lambda: 1.0 = most relevant only, lower = more diverse excerpts (0.4–0.7 typical)
+    mmr_lambda: float = 0.55
+    # Max characters per chunk in the LLM context (truncate very long chunks to save tokens)
+    context_max_chars_per_chunk: int = 2000
+    # Max chunks to send to the model after retrieval (safety cap)
+    context_max_chunks: int = 10
     # Max chunks per embedding API call (avoids OpenAI 300k tokens/request limit)
     embedding_batch_size: int = 100
 
