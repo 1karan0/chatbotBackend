@@ -92,15 +92,41 @@ class TenantCreate(BaseModel):
     """Request model for creating a new tenant."""
     tenant_id: Optional[UUID] = Field(None, description="Unique tenant identifier")
     tenant_name: str = Field(..., description="Human-readable tenant name")
-    username: str = Field(..., description="Admin username for the tenant")
-    password: str = Field(..., description="Admin password for the tenant")
+    user_id: str = Field(..., description="User ID for the tenant")
+
+
+
+class UserInfo(BaseModel):
+    """Response model for user information."""
+    user_id: UUID
+    username: Optional[str] = None
+    tenant_id: Optional[UUID] = None
+    tenant_ids: List[UUID] = Field(default_factory=list, description="Tenant IDs linked to this user")
+    is_active: Optional[bool] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+        json_encoders = {UUID: lambda v: str(v)}
+
+
+
+class TenantUserInfo(BaseModel):
+    """User summary in tenant response."""
+    user_id: UUID
+    username: Optional[str] = None
+
+    class Config:
+        json_encoders = {UUID: lambda v: str(v)}
 
 
 class TenantInfo(BaseModel):
     """Response model for tenant information."""
     tenant_id: UUID
     tenant_name: str
-    created_at: datetime
+    created_at: Optional[datetime] = None
+    user_id: Optional[UUID] = Field(None, description="Linked user ID for the tenant")
+    user: Optional[UserInfo] = None
 
     class Config:
         from_attributes = True
@@ -116,19 +142,6 @@ class UserCreate(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class UserInfo(BaseModel):
-    """Response model for user information."""
-    user_id: UUID
-    username: str
-    tenant_id: UUID
-    is_active: bool
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-        json_encoders = {UUID: lambda v: str(v)}
 
 
 # ⚠️ ---------------- ERROR ----------------

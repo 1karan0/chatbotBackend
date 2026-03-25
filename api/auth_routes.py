@@ -1,5 +1,6 @@
 from datetime import timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -10,9 +11,48 @@ from auth.jwt_handler import jwt_handler
 from services.data_loader import data_loader
 from config.settings import settings
 
-from models.schemas import TokenResponse, TenantInfo, UserInfo
+from models.schemas import TokenResponse, TenantInfo, UserInfo, TenantUserInfo
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
+
+def _serialize_user(user: Users) -> UserInfo:
+    """Map current DB user shape to API user response model."""
+    user_id = user.id if isinstance(user.id, UUID) else UUID(str(user.id))
+    tenant_id = user.tenantsTenant_id if isinstance(user.tenantsTenant_id, UUID) else (
+        UUID(str(user.tenantsTenant_id)) if user.tenantsTenant_id else None
+    )
+
+    return UserInfo(
+        user_id=user_id,
+        username=user.name or user.email,
+        tenant_id=tenant_id,
+        tenant_ids=[tenant_id] if tenant_id else [],
+        is_active=True,
+        created_at=user.createdAt
+    )
+
+
+def _serialize_tenant(tenant: Tenants, db: Session) -> TenantInfo:
+    """Map tenant row to API response with linked user_id."""
+    linked_user: Optional[Users] = (
+        db.query(Users)
+        .filter(Users.tenantsTenant_id == tenant.tenant_id)
+        .order_by(Users.createdAt.asc())
+        .first()
+    )
+    user_id: Optional[UUID] = None
+    if linked_user is not None:
+        uid = linked_user.id
+        user_id = uid if isinstance(uid, UUID) else UUID(str(uid))
+
+    return TenantInfo(
+        tenant_id=tenant.tenant_id,
+        tenant_name=tenant.tenant_name,
+        created_at=tenant.created_at,
+        user_id=user_id,
+        user=_serialize_user(linked_user) if linked_user else None
+    )
 
 
 # ---------------- LOGIN (Swagger-compatible) ----------------
@@ -60,28 +100,41 @@ async def create_tenant(
     tenant_data: Dict[str, str],  # accept JSON dictionary
     db: Session = Depends(get_db)
 ):
-    """Create a new tenant and admin user."""
+    """Create a new tenant."""
     tenant_id = tenant_data.get("tenant_id")
     tenant_name = tenant_data.get("tenant_name")
-    username = tenant_data.get("username")
+    user_id = tenant_data.get("user_id")
     
-    if not tenant_id or not tenant_name or not username :
+    if not tenant_id or not tenant_name or not user_id:
         raise HTTPException(
             status_code=400,
-            detail="tenant_id, tenant_name, username are required"
+            detail="tenant_id, tenant_name, and user_id are required"
         )
     
     if db.query(Tenants).filter(Tenants.tenant_id == tenant_id).first():
         raise HTTPException(status_code=400, detail="Tenant ID already exists")
-
+    
     try:
+        linked_user = db.query(Users).filter(Users.id == user_id).first()
+        if not linked_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
         tenant = Tenants(tenant_id=tenant_id, tenant_name=tenant_name)
         db.add(tenant)
         db.flush()
+
+        linked_user.tenantsTenant_id = tenant.tenant_id
         
         data_loader.create_tenant_directory(tenant_id)
         
         db.commit()
+        return {
+            "message": "Tenant created successfully",
+            "tenant_id": str(tenant.tenant_id),
+            "tenant_name": tenant.tenant_name,
+            "user_id": str(user_id),
+            "created_at": tenant.created_at.isoformat() if tenant.created_at else None
+        }
         
     except Exception as e:
         db.rollback()
@@ -127,7 +180,8 @@ async def create_user(
 # ---------------- GET TENANTS ----------------
 @router.get("/tenants", response_model=List[TenantInfo])
 async def get_all_tenants(db: Session = Depends(get_db)):
-    return db.query(Tenants).all()
+    tenants = db.query(Tenants).all()
+    return [_serialize_tenant(tenant, db) for tenant in tenants]
 
 
 @router.get("/tenants/{tenant_id}", response_model=TenantInfo)
@@ -135,7 +189,7 @@ async def get_tenant(tenant_id: str, db: Session = Depends(get_db)):
     tenant = db.query(Tenants).filter(Tenants.tenant_id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
+    return _serialize_tenant(tenant, db)
 
 # ---------------- DELETE TENANT ----------------
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -155,17 +209,19 @@ async def delete_tenant(tenant_id: str, db: Session = Depends(get_db)):
 # ---------------- GET USERS ----------------
 @router.get("/users", response_model=List[UserInfo])
 async def get_all_users(db: Session = Depends(get_db)):
-    return db.query(Users).all()
+    users = db.query(Users).all()
+    return [_serialize_user(user) for user in users]
 
  
 @router.get("/users/{user_id}", response_model=UserInfo)
 async def get_user(user_id: str, db: Session = Depends(get_db)):
-    user = db.query(Users).filter(Users.user_id == user_id).first()
+    user = db.query(Users).filter(Users.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+    return _serialize_user(user)
 
 
 @router.get("/tenants/{tenant_id}/users", response_model=List[UserInfo])
 async def get_tenant_users(tenant_id: str, db: Session = Depends(get_db)):
-    return db.query(Users).filter(Users.tenant_id == tenant_id).all()
+    users = db.query(Users).filter(Users.tenantsTenant_id == tenant_id).all()
+    return [_serialize_user(user) for user in users]
