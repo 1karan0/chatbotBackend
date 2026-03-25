@@ -4,11 +4,16 @@ import json
 import hashlib
 from typing import List, Dict, Any
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
+try:
+    # Optional fallback if you don't set Pinecone env vars.
+    from langchain_community.vectorstores import Chroma  # type: ignore
+except Exception:  # pragma: no cover
+    Chroma = None  # type: ignore
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from config.settings import settings
+from services.pinecone_vector_store import PineconeVectorStore
 
 # URL patterns that usually indicate non-content images (tracking, logos, icons)
 JUNK_IMAGE_PATTERNS = re.compile(
@@ -119,6 +124,7 @@ class RetrievalServiceV2:
         self.llm = ChatOpenAI(model=settings.chat_model, temperature=settings.temperature)
         self.chroma_path = settings.chroma_path
         self.vector_db = None
+        self.pinecone_enabled = bool(settings.pinecone_api_key and settings.pinecone_index_name)
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.dense_chunk_size,
             chunk_overlap=settings.dense_chunk_overlap,
@@ -380,6 +386,26 @@ Include only the numbers of questions whose answers are fully supported by the K
     def initialize_database(self) -> bool:
         """Initialize or load the vector database."""
         try:
+            if self.pinecone_enabled:
+                self.vector_db = PineconeVectorStore(
+                    embeddings=self.embeddings,
+                    pinecone_api_key=settings.pinecone_api_key,
+                    index_name=settings.pinecone_index_name,
+                    host=settings.pinecone_host,
+                    environment=settings.pinecone_environment,
+                    meta_path=settings.pinecone_meta_path,
+                    embedding_batch_size=settings.embedding_batch_size,
+                )
+                print(
+                    f"✅ Connected Pinecone index '{settings.pinecone_index_name}' "
+                    f"(meta cache at {settings.pinecone_meta_path})"
+                )
+                return True
+
+            if Chroma is None:
+                print("❌ Chroma fallback is unavailable. Install deps or configure Pinecone.")
+                return False
+
             self.vector_db = Chroma(
                 persist_directory=self.chroma_path,
                 embedding_function=self.embeddings

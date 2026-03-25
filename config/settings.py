@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     
     # External Services
     ngrok_auth_token: Optional[str] = os.getenv("NGROK_AUTH_TOKEN")
+
+    # Pinecone (vector search)
+    # When both `PINECONE_API_KEY` and `PINECONE_INDEX_NAME` are set, the app will use Pinecone
+    # instead of Chroma for dense vector storage.
+    pinecone_api_key: str = os.getenv("PINECONE_API_KEY", "")
+    pinecone_index_name: str = os.getenv("PINECONE_INDEX_NAME", "")
+    pinecone_host: Optional[str] = os.getenv("PINECONE_HOST")
+    pinecone_environment: Optional[str] = os.getenv("PINECONE_ENVIRONMENT")
+    pinecone_meta_path: str = os.getenv("PINECONE_META_PATH", "./pinecone_meta")
     
     # Model Settings
     embedding_model: str = "text-embedding-3-small"
