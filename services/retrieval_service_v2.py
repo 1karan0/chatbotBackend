@@ -141,12 +141,13 @@ Chatbot behavior mode:
 Answer using ONLY the numbered excerpts below. Each excerpt may be from a different page or document (source name is shown).
 
 Rules:
-- Give a direct, complete answer. Use a short bullet list when the user asks for multiple items, steps, or options.
+- Give a direct, complete answer. When listing several items, services, or steps, use either short plain lines starting with "- " (label, then colon, then text — no asterisks) or one or two clear paragraphs. Avoid long symbol-heavy lists.
+- Writing style (required): professional, conversational, and easy to read in a chat window. Do NOT use markdown bold (**), italics (*), underscore emphasis, or # headings. Do NOT wrap labels in asterisks. Do NOT use emoji unless the user's question explicitly asks for them.
 - Prefer concrete details from the excerpts (names, numbers, dates, URLs) over vague summaries.
 - If excerpts only partially answer the question, state what is known from them and what is not covered.
 - If nothing in the excerpts answers a factual question, say clearly that you don't have that information. Do not invent facts or use outside knowledge.
 - Simple greetings (hi, hello, good morning, etc.) never require facts from the excerpts: reply briefly and warmly in the configured tone. Do not refuse or say you lack information "about" their greeting.
-- For links and emails in your answer, use Markdown only: [visible text](https://example.com/path) or [email us](mailto:name@example.com). Do not put a closing parenthesis or period inside the URL; put punctuation after the final `)` of the link.
+- For links and emails only, you may use markdown links: [visible text](https://example.com/path) or [email us](mailto:name@example.com). Do not put a closing parenthesis or period inside the URL; put punctuation after the final ) of the link.
 
 Context:
 {context}
@@ -197,6 +198,25 @@ Answer:"""
             lines.append("Additional instructions:")
             lines.append(extra)
         return "\n".join(lines)
+
+    @staticmethod
+    def _normalize_answer_text(text: str) -> str:
+        """
+        Strip decorative markdown the model may still emit so chat/API responses stay plain and readable.
+        Preserves [label](url) markdown links; removes **bold** and simple *italic* wrappers.
+        """
+        if not text:
+            return text
+        s = text.strip()
+        # Unwrap **bold** (repeat in case of adjacent pairs)
+        for _ in range(4):
+            next_s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+            if next_s == s:
+                break
+            s = next_s
+        # Single-asterisk emphasis when not part of **
+        s = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", s)
+        return s.strip()
 
     @staticmethod
     def _is_simple_greeting(question: str) -> bool:
@@ -552,6 +572,7 @@ Include only the numbers of questions whose answers are fully supported by the K
                 question=question,
             )
             response = self.llm.invoke(final_prompt)
+            answer_text = self._normalize_answer_text(response.content or "")
 
             # Suggestions: broad KB sample + strict generation + verifier (no unanswerable clicks)
             knowledge_for_suggestions = self._docs_for_suggestion_generation(tenant_id_str, docs)
@@ -563,7 +584,7 @@ Include only the numbers of questions whose answers are fully supported by the K
             self.suggestion_cache[tenant_id_str] = suggestions
 
             return {
-                "answer": response.content.strip(),
+                "answer": answer_text,
                 "sources": list(set(sources)),
                 "tenant_id": tenant_id_str,
                 "suggestions": suggestions,
