@@ -20,3 +20,4 @@ app.db
 chroma_db/
 chroma_db/chroma.sqlite3
 *.sqlite3
+pinecone_meta/

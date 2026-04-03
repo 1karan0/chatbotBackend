@@ -4,11 +4,16 @@ import json
 import hashlib
 from typing import List, Dict, Any
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
+try:
+    # Optional fallback if you don't set Pinecone env vars.
+    from langchain_community.vectorstores import Chroma  # type: ignore
+except Exception:  # pragma: no cover
+    Chroma = None  # type: ignore
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from config.settings import settings
+from services.pinecone_vector_store import PineconeVectorStore
 
 # URL patterns that usually indicate non-content images (tracking, logos, icons)
 JUNK_IMAGE_PATTERNS = re.compile(
@@ -119,6 +124,7 @@ class RetrievalServiceV2:
         self.llm = ChatOpenAI(model=settings.chat_model, temperature=settings.temperature)
         self.chroma_path = settings.chroma_path
         self.vector_db = None
+        self.pinecone_enabled = bool(settings.pinecone_api_key and settings.pinecone_index_name)
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.dense_chunk_size,
             chunk_overlap=settings.dense_chunk_overlap,
@@ -135,12 +141,13 @@ Chatbot behavior mode:
 Answer using ONLY the numbered excerpts below. Each excerpt may be from a different page or document (source name is shown).
 
 Rules:
-- Give a direct, complete answer. Use a short bullet list when the user asks for multiple items, steps, or options.
+- Give a direct, complete answer. When listing several items, services, or steps, use either short plain lines starting with "- " (label, then colon, then text — no asterisks) or one or two clear paragraphs. Avoid long symbol-heavy lists.
+- Writing style (required): professional, conversational, and easy to read in a chat window. Do NOT use markdown bold (**), italics (*), underscore emphasis, or # headings. Do NOT wrap labels in asterisks. Do NOT use emoji unless the user's question explicitly asks for them.
 - Prefer concrete details from the excerpts (names, numbers, dates, URLs) over vague summaries.
 - If excerpts only partially answer the question, state what is known from them and what is not covered.
 - If nothing in the excerpts answers a factual question, say clearly that you don't have that information. Do not invent facts or use outside knowledge.
 - Simple greetings (hi, hello, good morning, etc.) never require facts from the excerpts: reply briefly and warmly in the configured tone. Do not refuse or say you lack information "about" their greeting.
-- For links and emails in your answer, use Markdown only: [visible text](https://example.com/path) or [email us](mailto:name@example.com). Do not put a closing parenthesis or period inside the URL; put punctuation after the final `)` of the link.
+- For links and emails only, you may use markdown links: [visible text](https://example.com/path) or [email us](mailto:name@example.com). Do not put a closing parenthesis or period inside the URL; put punctuation after the final ) of the link.
 
 Context:
 {context}
@@ -191,6 +198,25 @@ Answer:"""
             lines.append("Additional instructions:")
             lines.append(extra)
         return "\n".join(lines)
+
+    @staticmethod
+    def _normalize_answer_text(text: str) -> str:
+        """
+        Strip decorative markdown the model may still emit so chat/API responses stay plain and readable.
+        Preserves [label](url) markdown links; removes **bold** and simple *italic* wrappers.
+        """
+        if not text:
+            return text
+        s = text.strip()
+        # Unwrap **bold** (repeat in case of adjacent pairs)
+        for _ in range(4):
+            next_s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+            if next_s == s:
+                break
+            s = next_s
+        # Single-asterisk emphasis when not part of **
+        s = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", s)
+        return s.strip()
 
     @staticmethod
     def _is_simple_greeting(question: str) -> bool:
@@ -380,6 +406,26 @@ Include only the numbers of questions whose answers are fully supported by the K
     def initialize_database(self) -> bool:
         """Initialize or load the vector database."""
         try:
+            if self.pinecone_enabled:
+                self.vector_db = PineconeVectorStore(
+                    embeddings=self.embeddings,
+                    pinecone_api_key=settings.pinecone_api_key,
+                    index_name=settings.pinecone_index_name,
+                    host=settings.pinecone_host,
+                    environment=settings.pinecone_environment,
+                    meta_path=settings.pinecone_meta_path,
+                    embedding_batch_size=settings.embedding_batch_size,
+                )
+                print(
+                    f"✅ Connected Pinecone index '{settings.pinecone_index_name}' "
+                    f"(meta cache at {settings.pinecone_meta_path})"
+                )
+                return True
+
+            if Chroma is None:
+                print("❌ Chroma fallback is unavailable. Install deps or configure Pinecone.")
+                return False
+
             self.vector_db = Chroma(
                 persist_directory=self.chroma_path,
                 embedding_function=self.embeddings
@@ -526,6 +572,7 @@ Include only the numbers of questions whose answers are fully supported by the K
                 question=question,
             )
             response = self.llm.invoke(final_prompt)
+            answer_text = self._normalize_answer_text(response.content or "")
 
             # Suggestions: broad KB sample + strict generation + verifier (no unanswerable clicks)
             knowledge_for_suggestions = self._docs_for_suggestion_generation(tenant_id_str, docs)
@@ -537,7 +584,7 @@ Include only the numbers of questions whose answers are fully supported by the K
             self.suggestion_cache[tenant_id_str] = suggestions
 
             return {
-                "answer": response.content.strip(),
+                "answer": answer_text,
                 "sources": list(set(sources)),
                 "tenant_id": tenant_id_str,
                 "suggestions": suggestions,
